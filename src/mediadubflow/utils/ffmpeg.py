@@ -33,6 +33,19 @@ def get_ffmpeg_path() -> str:
     return path
 
 
+_ACTIVE_SUBPROCESSES: set[asyncio.subprocess.Process] = set()
+
+
+def kill_all_ffmpeg_processes() -> None:
+    """Terminate all active FFmpeg subprocesses."""
+    for proc in list(_ACTIVE_SUBPROCESSES):
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    _ACTIVE_SUBPROCESSES.clear()
+
+
 async def run_ffmpeg(
     args: list[str],
     *,
@@ -62,23 +75,35 @@ async def run_ffmpeg(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
+    _ACTIVE_SUBPROCESSES.add(process)
 
     try:
-        stdout_bytes, stderr_bytes = await asyncio.wait_for(
-            process.communicate(),
-            timeout=timeout,
-        )
-    except TimeoutError:
-        logger.error(
-            "FFmpeg execution timed out after {} seconds. Terminating process...",
-            timeout,
-        )
         try:
-            process.kill()
-            await process.wait()
-        except Exception as kill_exc:
-            logger.warning("Failed to terminate timed out FFmpeg process: {}", kill_exc)
-        raise TimeoutError(f"FFmpeg command timed out after {timeout} seconds")
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                process.communicate(),
+                timeout=timeout,
+            )
+        except TimeoutError:
+            logger.error(
+                "FFmpeg execution timed out after {} seconds. Terminating process...",
+                timeout,
+            )
+            try:
+                process.kill()
+                await process.wait()
+            except Exception as kill_exc:
+                logger.warning("Failed to terminate timed out FFmpeg process: {}", kill_exc)
+            raise TimeoutError(f"FFmpeg command timed out after {timeout} seconds")
+        except (asyncio.CancelledError, GeneratorExit):
+            logger.warning("FFmpeg execution cancelled. Killing subprocess...")
+            try:
+                process.kill()
+                await process.wait()
+            except Exception as kill_exc:
+                logger.warning("Failed to kill cancelled FFmpeg process: {}", kill_exc)
+            raise
+    finally:
+        _ACTIVE_SUBPROCESSES.discard(process)
 
     stdout_text = stdout_bytes.decode(errors="replace")
     stderr_text = stderr_bytes.decode(errors="replace")

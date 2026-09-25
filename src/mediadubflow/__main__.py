@@ -26,6 +26,16 @@ def main() -> None:
     for error in validation_report.errors:
         logger.error("Startup configuration error: {}", error)
 
+    # Ensure Qt platform plugins (qwindows.dll) can be located even in deep/OneDrive paths.
+    import os  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    import PySide6  # noqa: PLC0415
+
+    plugins_dir = Path(PySide6.__file__).resolve().parent / "plugins" / "platforms"
+    if plugins_dir.exists() and "QT_QPA_PLATFORM_PLUGIN_PATH" not in os.environ:
+        os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(plugins_dir)
+
     # Import Qt application only after migrations succeed so any startup
     # errors are captured in the log before the GUI appears.
     from PySide6.QtWidgets import QApplication  # noqa: PLC0415

@@ -26,8 +26,15 @@ class STTBackend(StrEnum):
 
 
 class TTSBackend(StrEnum):
-    COQUI = "coqui"
+    EDGE_TTS = "edge_tts"
     OPENAI = "openai"
+    COQUI = "coqui"
+
+
+class PipelineOutputMode(StrEnum):
+    VOICE_DUBBING_ONLY = "voice_dubbing_only"
+    SUBTITLES_ONLY = "subtitles_only"
+    BOTH = "both"
 
 
 class Settings(BaseSettings):
@@ -78,10 +85,20 @@ class Settings(BaseSettings):
     )
 
     # --- TTS ---
-    tts_backend: TTSBackend = Field(default=TTSBackend.COQUI)
+    tts_backend: TTSBackend = Field(default=TTSBackend.EDGE_TTS)
+    tts_voice: str = Field(
+        default="km-KH-PisethNeural",
+        description="Khmer TTS voice name (e.g. km-KH-PisethNeural or km-KH-SreymomNeural)",
+    )
     tts_model: str = Field(
         default="tts_models/km/fairseq/vits",
         description="Coqui TTS model identifier for Khmer",
+    )
+
+    # --- Output Mode ---
+    output_mode: PipelineOutputMode = Field(
+        default=PipelineOutputMode.VOICE_DUBBING_ONLY,
+        description="Workflow mode: voice_dubbing_only | subtitles_only | both",
     )
 
     # --- Processing ---

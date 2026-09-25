@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mediadubflow.config.settings import PipelineOutputMode, settings
 from mediadubflow.database.repository import get_project
 from mediadubflow.database.session import get_session
 from mediadubflow.models.orm import Episode, EpisodeStatus, Project
@@ -360,7 +361,11 @@ class WorkspaceScreen(QWidget):
     @staticmethod
     def _status_to_stage_name(status: EpisodeStatus) -> str:
         if status == EpisodeStatus.DONE:
-            return "Complete (Subtitles ready)"
+            return (
+                "Complete (Dubbed Video ready)"
+                if settings.output_mode != PipelineOutputMode.SUBTITLES_ONLY
+                else "Complete (Subtitles ready)"
+            )
         if status == EpisodeStatus.FAILED:
             return "Failed"
         if status == EpisodeStatus.PENDING:
@@ -460,7 +465,12 @@ class WorkspaceScreen(QWidget):
             self._row_progress_bars[episode_id].setValue(100)
 
         if episode_id in self._row_stage_labels:
-            self._row_stage_labels[episode_id].setText("Complete (Subtitles ready)")
+            msg = (
+                "Complete (Dubbed Video ready)"
+                if settings.output_mode != PipelineOutputMode.SUBTITLES_ONLY
+                else "Complete (Subtitles ready)"
+            )
+            self._row_stage_labels[episode_id].setText(msg)
 
         if episode_id in self._row_action_buttons:
             btn = self._row_action_buttons[episode_id]

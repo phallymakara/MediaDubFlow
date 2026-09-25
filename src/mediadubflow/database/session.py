@@ -59,8 +59,12 @@ async def run_db_migrations() -> None:
     from alembic import command  # noqa: PLC0415
     from alembic.config import Config  # noqa: PLC0415
 
-    # Locate alembic.ini relative to this file's package root.
-    ini_path = Path(__file__).parents[4] / "alembic.ini"
+    # Locate alembic.ini relative to this file's package root or working directory.
+    ini_path = Path(__file__).resolve().parents[3] / "alembic.ini"
+    if not ini_path.exists():
+        cwd_ini = Path("alembic.ini").resolve()
+        if cwd_ini.exists():
+            ini_path = cwd_ini
 
     alembic_cfg = Config(str(ini_path))
 
@@ -68,7 +72,7 @@ async def run_db_migrations() -> None:
     try:
         # Alembic's command.upgrade is synchronous; run it in a thread so
         # we don't block the asyncio event loop during startup.
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, command.upgrade, alembic_cfg, "head")
         logger.info("Database schema is up to date")
     except Exception as exc:

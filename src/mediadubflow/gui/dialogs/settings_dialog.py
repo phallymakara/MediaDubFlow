@@ -9,6 +9,9 @@ Provides controls to update:
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import dotenv
 from loguru import logger
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -24,7 +27,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from mediadubflow.config.settings import TranslationProvider, settings
+from mediadubflow.config.settings import (
+    PipelineOutputMode,
+    TranslationProvider,
+    settings,
+)
 
 
 class SettingsDialog(QDialog):
@@ -51,6 +58,19 @@ class SettingsDialog(QDialog):
         form_layout = QFormLayout()
         form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
         form_layout.setSpacing(12)
+
+        # 0. Workflow Mode
+        self._cmb_output_mode = QComboBox()
+        self._cmb_output_mode.addItem(
+            "Voice Dubbing Only (No Subtitles)", PipelineOutputMode.VOICE_DUBBING_ONLY
+        )
+        self._cmb_output_mode.addItem(
+            "Subtitles Only (No Voice Dubbing)", PipelineOutputMode.SUBTITLES_ONLY
+        )
+        self._cmb_output_mode.addItem(
+            "Both (Voice Dubbing + Subtitles)", PipelineOutputMode.BOTH
+        )
+        form_layout.addRow("Workflow Mode:", self._cmb_output_mode)
 
         # 1. Translation Provider
         self._cmb_provider = QComboBox()
@@ -118,6 +138,11 @@ class SettingsDialog(QDialog):
         main_layout.addLayout(btn_layout)
 
     def _load_current_values(self) -> None:
+        # Workflow Mode
+        mode_idx = self._cmb_output_mode.findData(settings.output_mode)
+        if mode_idx >= 0:
+            self._cmb_output_mode.setCurrentIndex(mode_idx)
+
         # Provider
         idx = self._cmb_provider.findData(settings.translation_provider)
         if idx >= 0:
@@ -151,6 +176,7 @@ class SettingsDialog(QDialog):
             self._txt_anthropic_key.setEnabled(True)
 
     def _on_save_clicked(self) -> None:
+        output_mode = self._cmb_output_mode.currentData()
         provider = self._cmb_provider.currentData()
         openai_key = self._txt_openai_key.text().strip()
         anthropic_key = self._txt_anthropic_key.text().strip()
@@ -159,6 +185,7 @@ class SettingsDialog(QDialog):
         concurrency = self._spin_concurrency.value()
 
         # Update runtime settings
+        settings.output_mode = output_mode
         settings.translation_provider = provider
         if openai_key:
             settings.openai_api_key = openai_key
@@ -174,4 +201,23 @@ class SettingsDialog(QDialog):
             device,
             concurrency,
         )
+
+        # Persist modified settings to .env
+        try:
+            env_path = Path(".env").resolve()
+            if not env_path.exists():
+                env_path.touch()
+            dotenv.set_key(str(env_path), "OUTPUT_MODE", str(output_mode))
+            dotenv.set_key(str(env_path), "TRANSLATION_PROVIDER", str(provider))
+            if openai_key:
+                dotenv.set_key(str(env_path), "OPENAI_API_KEY", openai_key)
+            if anthropic_key:
+                dotenv.set_key(str(env_path), "ANTHROPIC_API_KEY", anthropic_key)
+            dotenv.set_key(str(env_path), "WHISPER_MODEL_SIZE", str(whisper_size))
+            dotenv.set_key(str(env_path), "DEVICE", str(device))
+            dotenv.set_key(str(env_path), "MAX_CONCURRENT_EPISODES", str(concurrency))
+            logger.info("Settings saved to .env at {}", env_path)
+        except Exception as exc:
+            logger.warning("Could not persist settings to .env: {}", exc)
+
         self.accept()

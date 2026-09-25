@@ -6,6 +6,7 @@ import json
 
 from loguru import logger
 
+from mediadubflow.config.settings import PipelineOutputMode, settings
 from mediadubflow.pipeline.base import PipelineStage, StageContext, StageResult
 from mediadubflow.utils.subtitles import create_ass_file, create_srt_file
 
@@ -21,7 +22,10 @@ class SubtitleGenerationStage(PipelineStage):
     name = "Subtitle Generation"
 
     def can_skip(self, ctx: StageContext) -> bool:
-        """Return True if both .srt and .ass files already exist and are non-empty."""
+        """Return True if output mode skips subtitles, or if both .srt and .ass files already exist."""
+        if settings.output_mode == PipelineOutputMode.VOICE_DUBBING_ONLY:
+            return True
+
         if (
             ctx.subtitle_srt_path is None
             or not ctx.subtitle_srt_path.exists()
@@ -38,6 +42,16 @@ class SubtitleGenerationStage(PipelineStage):
             return False
 
     async def run(self, ctx: StageContext) -> StageResult:
+        if settings.output_mode == PipelineOutputMode.VOICE_DUBBING_ONLY:
+            logger.info(
+                "[Episode {}] Skipping subtitle generation (output_mode=voice_dubbing_only)",
+                ctx.episode_id,
+            )
+            return StageResult(
+                success=True,
+                message="Subtitles skipped per output mode setting",
+            )
+
         logger.info("[Episode {}] Generating Khmer subtitles", ctx.episode_id)
 
         # Prefer translation_path, fallback to transcript_path
@@ -60,6 +74,11 @@ class SubtitleGenerationStage(PipelineStage):
 
         if not isinstance(segments, list):
             msg = f"Subtitle source data format invalid (expected list, got {type(segments)})"
+            logger.error("[Episode {}] {}", ctx.episode_id, msg)
+            return StageResult(success=False, message=msg)
+
+        if len(segments) > 5000:
+            msg = f"Subtitle generation abort: segment count ({len(segments)}) exceeds safety limit of 5000 segments."
             logger.error("[Episode {}] {}", ctx.episode_id, msg)
             return StageResult(success=False, message=msg)
 

@@ -35,6 +35,7 @@ from mediadubflow.gui.screens.project_wizard_screen import ProjectWizardScreen
 from mediadubflow.gui.screens.workspace_screen import WorkspaceScreen
 from mediadubflow.gui.styles import GLOBAL_QSS
 from mediadubflow.models.orm import Episode
+from mediadubflow.utils.ffmpeg import kill_all_ffmpeg_processes
 
 if TYPE_CHECKING:
     from mediadubflow.config.settings import SettingsValidationReport
@@ -213,6 +214,7 @@ class MediaDubFlowApp(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         """Ensure background jobs and thread shutdown cleanly."""
-        self._job_manager.stop()
+        kill_all_ffmpeg_processes()
+        self._job_manager.stop(cancel_active=True)
         self._bridge.stop()
         super().closeEvent(event)

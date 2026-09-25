@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mediadubflow.config.settings import settings
 from mediadubflow.models.orm import Episode, EpisodeStatus
 
 
@@ -86,10 +87,17 @@ class EpisodeDetailPanel(QDialog):
 
         meta_layout.addWidget(self._lbl_source)
         meta_layout.addWidget(self._lbl_language)
+
+        if self.episode.output_video_path and Path(self.episode.output_video_path).exists():
+            out_vid_name = Path(self.episode.output_video_path).name
+            lbl_out = QLabel(f"<b>Dubbed Video:</b> <span style='color: #16a34a;'>{out_vid_name}</span>")
+            lbl_out.setStyleSheet("font-size: 13px; color: #334155;")
+            meta_layout.addWidget(lbl_out)
+
         main_layout.addWidget(meta_widget)
 
-        # Subtitle Preview Section
-        preview_header = QLabel("Generated Khmer Subtitles Preview (.srt / .ass):")
+        # Content Preview Section
+        preview_header = QLabel("Generated Khmer Dialogue / Subtitles Preview:")
         preview_header.setStyleSheet("font-weight: 600; font-size: 13px; color: #0f172a;")
         main_layout.addWidget(preview_header)
 
@@ -107,6 +115,12 @@ class EpisodeDetailPanel(QDialog):
         self._btn_open_folder.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_open_folder.clicked.connect(self._on_open_folder_clicked)
         btn_layout.addWidget(self._btn_open_folder)
+
+        if self.episode.output_video_path and Path(self.episode.output_video_path).exists():
+            self._btn_play = QPushButton("▶ Play Dubbed Video")
+            self._btn_play.setCursor(Qt.CursorShape.PointingHandCursor)
+            self._btn_play.clicked.connect(self._on_play_video_clicked)
+            btn_layout.addWidget(self._btn_play)
 
         btn_layout.addStretch(1)
 
@@ -135,16 +149,44 @@ class EpisodeDetailPanel(QDialog):
                 self._txt_preview.setPlainText(content[:10000])  # limit preview
             except Exception as exc:
                 self._txt_preview.setPlainText(f"Failed to read subtitle file: {exc}")
+        elif self.episode.translation_path and Path(self.episode.translation_path).exists():
+            try:
+                import json  # noqa: PLC0415
+                with open(self.episode.translation_path, "r", encoding="utf-8") as f:
+                    segments = json.load(f)
+                lines = []
+                for s in segments:
+                    start_sec = s.get("start", 0.0)
+                    m, sec = divmod(int(start_sec), 60)
+                    text = s.get("translated_text", "")
+                    lines.append(f"[{m:02d}:{sec:02d}] {text}")
+                self._txt_preview.setPlainText("\n".join(lines[:500]))
+            except Exception as exc:
+                self._txt_preview.setPlainText(f"Could not load dialogue: {exc}")
         else:
             if self.episode.status == EpisodeStatus.DONE:
-                self._txt_preview.setPlainText("Subtitles completed but file path not found.")
+                self._txt_preview.setPlainText("Processing completed successfully.")
             else:
                 self._txt_preview.setPlainText(
-                    "Subtitles have not been generated for this episode yet."
+                    "Dubbed dialogue and subtitles have not been generated for this episode yet."
                 )
 
+    def _on_play_video_clicked(self) -> None:
+        if self.episode.output_video_path:
+            p = Path(self.episode.output_video_path).resolve()
+            if p.exists() and p.is_file():
+                try:
+                    if sys.platform == "win32":
+                        os.startfile(str(p))
+                    elif sys.platform == "darwin":
+                        subprocess.Popen(["open", str(p)])
+                    else:
+                        subprocess.Popen(["xdg-open", str(p)])
+                except Exception as exc:
+                    logger.error("Failed to open media player for {}: {}", p, exc)
+
     def _on_open_folder_clicked(self) -> None:
-        target_path_str = self.episode.subtitle_srt_path or self.episode.source_file
+        target_path_str = self.episode.output_video_path or self.episode.subtitle_srt_path or self.episode.source_file
         if not target_path_str:
             return
 
@@ -155,6 +197,26 @@ class EpisodeDetailPanel(QDialog):
         parent_dir = target_path.parent.resolve()
         if not parent_dir.is_dir():
             logger.warning("Target parent path is not a directory: {}", parent_dir)
+            return
+
+        # Ensure parent_dir is contained within allowed workspace/media roots
+        allowed_roots = [
+            settings.output_root.resolve(),
+            settings.cache_dir.resolve(),
+            settings.storage_root.resolve(),
+        ]
+        if self.episode.source_file:
+            try:
+                allowed_roots.append(Path(self.episode.source_file).parent.resolve())
+            except Exception:
+                pass
+
+        is_allowed = any(
+            parent_dir == root or parent_dir.is_relative_to(root)
+            for root in allowed_roots
+        )
+        if not is_allowed:
+            logger.warning("Folder path '{}' is outside allowed directories; refusing to open", parent_dir)
             return
 
         try:

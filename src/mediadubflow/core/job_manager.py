@@ -104,6 +104,8 @@ class JobManager(QObject):
     ) -> None:
         super().__init__(parent)
         self._queue: asyncio.Queue[int] = asyncio.Queue()
+        self._active_or_queued: set[int] = set()
+        self._tasks: dict[int, asyncio.Task[None]] = {}
         self._semaphore: asyncio.Semaphore | None = None
         self._running = False
         self._stages = list(stages) if stages is not None else list(PIPELINE)
@@ -118,14 +120,36 @@ class JobManager(QObject):
         )
         await self._dispatch_loop()
 
-    def stop(self) -> None:
-        """Signal the worker loop to stop after finishing current jobs."""
+    def stop(self, cancel_active: bool = False) -> None:
+        """Signal the worker loop to stop after finishing current jobs, or cancel immediately."""
         self._running = False
+        if cancel_active:
+            for task in list(self._tasks.values()):
+                if not task.done():
+                    task.cancel()
 
-    def enqueue(self, episode_id: int) -> None:
-        """Add an episode to the processing queue."""
+    def cancel_episode(self, episode_id: int) -> bool:
+        """Cancel a running episode processing task."""
+        task = self._tasks.get(episode_id)
+        if task and not task.done():
+            task.cancel()
+            logger.info("[Episode {}] Cancelled active episode task", episode_id)
+            return True
+        return False
+
+    def is_active_or_queued(self, episode_id: int) -> bool:
+        """Check if an episode is already in the queue or actively running."""
+        return episode_id in self._active_or_queued
+
+    def enqueue(self, episode_id: int) -> bool:
+        """Add an episode to the processing queue if not already queued or running."""
+        if episode_id in self._active_or_queued:
+            logger.warning("[Episode {}] Already queued or running; ignoring duplicate enqueue", episode_id)
+            return False
+        self._active_or_queued.add(episode_id)
         self._queue.put_nowait(episode_id)
         logger.info("Enqueued episode_id={}", episode_id)
+        return True
 
     async def _dispatch_loop(self) -> None:
         """Pull episodes from the queue and run them concurrently."""
@@ -143,7 +167,9 @@ class JobManager(QObject):
                 name=f"episode-{episode_id}",
             )
             tasks.add(task)
+            self._tasks[episode_id] = task
             task.add_done_callback(tasks.discard)
+            task.add_done_callback(lambda _, ep_id=episode_id: self._tasks.pop(ep_id, None))
 
         # Wait for all in-flight tasks before returning.
         if tasks:
@@ -151,11 +177,12 @@ class JobManager(QObject):
 
     async def _run_episode(self, episode_id: int, sem: asyncio.Semaphore) -> None:
         """Execute the full pipeline for a single episode under the semaphore."""
-        async with sem:
-            logger.info("Processing episode_id={}", episode_id)
-            ctx = await self._build_context(episode_id)
-            if ctx is None:
-                return
+        try:
+            async with sem:
+                logger.info("Processing episode_id={}", episode_id)
+                ctx = await self._build_context(episode_id)
+                if ctx is None:
+                    return
 
             for stage in self._stages:
                 if stage.can_skip(ctx):
@@ -172,11 +199,17 @@ class JobManager(QObject):
 
                 try:
                     result = await stage.run(ctx)
+                except asyncio.CancelledError:
+                    logger.info("[Episode {}] Stage '{}' was cancelled", episode_id, stage.name)
+                    safe_msg = f"{stage.name} cancelled by user"
+                    await self._set_failed(episode_id, safe_msg)
+                    self.episode_failed.emit(episode_id, safe_msg)
+                    raise
                 except Exception as exc:
-                    error_msg = f"Stage '{stage.name}' raised an exception: {exc}"
-                    logger.exception("[Episode {}] {}", episode_id, error_msg)
-                    await self._set_failed(episode_id, error_msg)
-                    self.episode_failed.emit(episode_id, error_msg)
+                    logger.exception("[Episode {}] Stage '{}' raised an exception: {}", episode_id, stage.name, exc)
+                    safe_msg = f"{stage.name} failed: {type(exc).__name__}"
+                    await self._set_failed(episode_id, safe_msg)
+                    self.episode_failed.emit(episode_id, safe_msg)
                     return
 
                 if not result.success:
@@ -189,9 +222,11 @@ class JobManager(QObject):
 
                 self.progress_updated.emit(episode_id, stage.name, 100)
 
-            await self._set_status(episode_id, EpisodeStatus.DONE)
-            self.episode_completed.emit(episode_id)
-            logger.info("Episode {} completed successfully", episode_id)
+                await self._set_status(episode_id, EpisodeStatus.DONE)
+                self.episode_completed.emit(episode_id)
+                logger.info("Episode {} completed successfully", episode_id)
+        finally:
+            self._active_or_queued.discard(episode_id)
 
     async def _persist_stage_updates(
         self,
@@ -254,36 +289,54 @@ class JobManager(QObject):
                         "[Episode {}] Could not parse project glossary: {}", episode_id, exc
                     )
 
+            source_path = Path(episode.source_file).resolve()
+            if not source_path.exists() or not source_path.is_file():
+                logger.error(
+                    "[Episode {}] Source file does not exist or is invalid: {}",
+                    episode_id,
+                    source_path,
+                )
+                return None
+
+            allowed_dirs = (
+                work_dir.resolve(),
+                output_dir.resolve(),
+                settings.storage_root.resolve(),
+            )
+
+            def _safe_checkpoint(raw: str | None) -> Path | None:
+                if not raw:
+                    return None
+                try:
+                    p = Path(raw).resolve()
+                    for allowed in allowed_dirs:
+                        if p == allowed or p.is_relative_to(allowed):
+                            return p
+                    logger.warning(
+                        "[Episode {}] Checkpoint path '{}' is outside allowed directories; ignoring",
+                        episode_id,
+                        raw,
+                    )
+                    return None
+                except (ValueError, RuntimeError):
+                    return None
+
             return StageContext(
                 episode_id=episode_id,
                 project_id=episode.project_id,
-                source_file=Path(episode.source_file),
+                source_file=source_path,
                 work_dir=work_dir,
                 output_dir=output_dir,
                 source_language=episode.detected_language or "",
-                extracted_audio=Path(episode.extracted_audio_path)
-                if episode.extracted_audio_path
-                else None,
-                transcript_path=Path(episode.transcript_path) if episode.transcript_path else None,
-                diarization_path=Path(episode.diarization_path)
-                if episode.diarization_path
-                else None,
-                translation_path=Path(episode.translation_path)
-                if episode.translation_path
-                else None,
-                subtitle_srt_path=Path(episode.subtitle_srt_path)
-                if episode.subtitle_srt_path
-                else None,
-                subtitle_ass_path=Path(episode.subtitle_ass_path)
-                if episode.subtitle_ass_path
-                else None,
-                tts_audio_path=Path(episode.tts_audio_path) if episode.tts_audio_path else None,
-                mixed_audio_path=Path(episode.mixed_audio_path)
-                if episode.mixed_audio_path
-                else None,
-                output_video_path=Path(episode.output_video_path)
-                if episode.output_video_path
-                else None,
+                extracted_audio=_safe_checkpoint(episode.extracted_audio_path),
+                transcript_path=_safe_checkpoint(episode.transcript_path),
+                diarization_path=_safe_checkpoint(episode.diarization_path),
+                translation_path=_safe_checkpoint(episode.translation_path),
+                subtitle_srt_path=_safe_checkpoint(episode.subtitle_srt_path),
+                subtitle_ass_path=_safe_checkpoint(episode.subtitle_ass_path),
+                tts_audio_path=_safe_checkpoint(episode.tts_audio_path),
+                mixed_audio_path=_safe_checkpoint(episode.mixed_audio_path),
+                output_video_path=_safe_checkpoint(episode.output_video_path),
                 metadata=metadata,
             )
 

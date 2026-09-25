@@ -56,6 +56,11 @@ class TranslationStage(PipelineStage):
             logger.error("[Episode {}] {}", ctx.episode_id, msg)
             return StageResult(success=False, message=msg)
 
+        if len(segments) > 5000:
+            msg = f"Transcript has {len(segments)} segments, exceeding safety limit of 5000 segments per episode."
+            logger.error("[Episode {}] {}", ctx.episode_id, msg)
+            return StageResult(success=False, message=msg)
+
         ctx.work_dir.mkdir(parents=True, exist_ok=True)
         output_json = ctx.work_dir / f"translation_{ctx.episode_id}.json"
 

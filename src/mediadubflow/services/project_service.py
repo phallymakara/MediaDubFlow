@@ -8,6 +8,7 @@ Ensures project creation and batch episode population run as a single atomic tra
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 
 from loguru import logger
@@ -17,6 +18,7 @@ from mediadubflow.config.settings import settings
 from mediadubflow.database.repository import (
     create_episode,
     create_project,
+    delete_project,
     get_project,
 )
 from mediadubflow.models.orm import Episode, Project
@@ -188,3 +190,27 @@ async def rescan_project_episodes(
         logger.info("Re-scan for project id={}: no new episodes found", project_id)
 
     return new_episodes
+
+
+async def delete_project_with_files(session: AsyncSession, project_id: int) -> bool:
+    """
+    Delete a project from the database and remove its intermediate cache directories.
+    """
+    project = await get_project(session, project_id)
+    if project is None:
+        return False
+
+    episode_ids = [ep.id for ep in project.episodes] if project.episodes else []
+    deleted = await delete_project(session, project_id)
+
+    if deleted:
+        for ep_id in episode_ids:
+            ep_cache = settings.cache_dir / f"episode_{ep_id}"
+            if ep_cache.exists() and ep_cache.is_dir():
+                try:
+                    shutil.rmtree(ep_cache, ignore_errors=True)
+                    logger.debug("Deleted cache directory: {}", ep_cache)
+                except Exception as exc:
+                    logger.warning("Failed to clean up cache directory {}: {}", ep_cache, exc)
+
+    return deleted

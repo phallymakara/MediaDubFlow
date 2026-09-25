@@ -589,8 +589,10 @@ class ProjectWizardScreen(QWidget):
         """Main thread callback if project creation encounters an error."""
         logger.exception("Failed to create project: {}", exc)
         self._btn_create.setEnabled(True)
-        self._btn_create.setText("Start Project")
-        self._lbl_create_status.setText(f"Error creating project: {exc}")
+        user_msg = "Failed to create project. Please verify folder permissions and project name."
+        if isinstance(exc, ValueError):
+            user_msg = f"Invalid project input: {exc}"
+        self._lbl_create_status.setText(user_msg)
         self._lbl_create_status.setStyleSheet("color: #ef4444; font-size: 13px;")
         self._lbl_create_status.setVisible(True)
 

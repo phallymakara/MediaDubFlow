@@ -292,7 +292,8 @@ async def update_episode_language(
         logger.error("update_episode_language: episode id={} not found", episode_id)
         return
 
-    episode.detected_language = language
+    sanitized_lang = language.strip()[:10] if language else None
+    episode.detected_language = sanitized_lang
     if confidence is not None:
         episode.language_confidence = confidence
     logger.debug(

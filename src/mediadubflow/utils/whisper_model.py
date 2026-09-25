@@ -49,6 +49,10 @@ def get_whisper_model(
 
     cache_key = (resolved_size, resolved_device, resolved_compute)
 
+    # Double-checked locking optimization
+    if cache_key in _MODEL_CACHE:
+        return _MODEL_CACHE[cache_key]
+
     with _CACHE_LOCK:
         if cache_key in _MODEL_CACHE:
             logger.debug("Reusing cached WhisperModel for {}", cache_key)
