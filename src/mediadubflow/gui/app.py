@@ -56,7 +56,8 @@ class MediaDubFlowApp(QMainWindow):
         super().__init__()
         self.validation_report = validation_report
         self.setWindowTitle("MediaDubFlow — Khmer Localization Studio")
-        self.setMinimumSize(1100, 720)
+        self.setMinimumSize(960, 580)
+        self.resize(1120, 720)
         self.setStyleSheet(GLOBAL_QSS)
 
         # Initialize background async worker thread

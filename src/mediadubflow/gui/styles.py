@@ -214,4 +214,95 @@ QProgressBar::chunk {{
     background-color: {COLOR_PRIMARY};
     border-radius: 4px;
 }}
+
+/* Scroll Areas */
+QScrollArea {{
+    background-color: transparent;
+    border: none;
+}}
+
+QScrollArea > QWidget > QWidget {{
+    background-color: transparent;
+}}
+
+/* Modern Cross-Platform ScrollBars (Mac and Windows compatible) */
+QScrollBar:vertical {{
+    background-color: transparent;
+    width: 8px;
+    margin: 0px;
+    border-radius: 4px;
+}}
+
+QScrollBar::handle:vertical {{
+    background-color: #cbd5e1;
+    min-height: 24px;
+    border-radius: 4px;
+    margin: 1px;
+}}
+
+QScrollBar::handle:vertical:hover {{
+    background-color: #94a3b8;
+}}
+
+QScrollBar::handle:vertical:pressed {{
+    background-color: #64748b;
+}}
+
+QScrollBar::sub-line:vertical, QScrollBar::add-line:vertical {{
+    height: 0px;
+    width: 0px;
+    background: none;
+    border: none;
+}}
+
+QScrollBar::up-arrow:vertical, QScrollBar::down-arrow:vertical {{
+    background: none;
+    border: none;
+}}
+
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+    background: none;
+}}
+
+QScrollBar:horizontal {{
+    background-color: transparent;
+    height: 8px;
+    margin: 0px;
+    border-radius: 4px;
+}}
+
+QScrollBar::handle:horizontal {{
+    background-color: #cbd5e1;
+    min-width: 24px;
+    border-radius: 4px;
+    margin: 1px;
+}}
+
+QScrollBar::handle:horizontal:hover {{
+    background-color: #94a3b8;
+}}
+
+QScrollBar::handle:horizontal:pressed {{
+    background-color: #64748b;
+}}
+
+QScrollBar::sub-line:horizontal, QScrollBar::add-line:horizontal {{
+    height: 0px;
+    width: 0px;
+    background: none;
+    border: none;
+}}
+
+QScrollBar::left-arrow:horizontal, QScrollBar::right-arrow:horizontal {{
+    background: none;
+    border: none;
+}}
+
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+    background: none;
+}}
+
+QScrollBar::corner {{
+    background: transparent;
+}}
 """

@@ -161,6 +161,88 @@ def test_validate_settings_valid_anthropic(tmp_path: Path) -> None:
         assert len(report.errors) == 0
 
 
+def test_validate_settings_missing_gemini_key(tmp_path: Path) -> None:
+    """validate_settings fails when Gemini is selected and GEMINI_API_KEY is missing."""
+    cfg = Settings(
+        _env_file=None,
+        output_root=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+        log_dir=tmp_path / "logs",
+        translation_provider=TranslationProvider.GEMINI,
+        gemini_api_key="",
+        hf_token="hf_test_token",
+        device="cpu",
+    )
+
+    with patch("shutil.which", return_value="/usr/bin/tool"):
+        report = validate_settings(cfg)
+        assert not report.is_valid
+        assert any("GEMINI_API_KEY is not configured" in err for err in report.errors)
+
+
+def test_validate_settings_valid_gemini(tmp_path: Path) -> None:
+    """validate_settings passes when Gemini is selected and key is supplied."""
+    cfg = Settings(
+        _env_file=None,
+        output_root=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+        log_dir=tmp_path / "logs",
+        translation_provider=TranslationProvider.GEMINI,
+        gemini_api_key="AIzaSy-test-key",
+        hf_token="hf_test_token",
+        device="cpu",
+    )
+
+    with patch("shutil.which", return_value="/usr/bin/tool"):
+        report = validate_settings(cfg)
+        assert report.is_valid
+        assert len(report.errors) == 0
+
+
+def test_validate_settings_missing_azure_openai_fields(tmp_path: Path) -> None:
+    """validate_settings fails when Azure OpenAI is selected but required fields are missing."""
+    cfg = Settings(
+        _env_file=None,
+        output_root=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+        log_dir=tmp_path / "logs",
+        translation_provider=TranslationProvider.AZURE_OPENAI,
+        azure_openai_api_key="",
+        azure_openai_endpoint="",
+        azure_openai_deployment_name="",
+        hf_token="hf_test_token",
+        device="cpu",
+    )
+
+    with patch("shutil.which", return_value="/usr/bin/tool"):
+        report = validate_settings(cfg)
+        assert not report.is_valid
+        assert any("AZURE_OPENAI_API_KEY is not configured" in err for err in report.errors)
+        assert any("AZURE_OPENAI_ENDPOINT is not configured" in err for err in report.errors)
+        assert any("AZURE_OPENAI_DEPLOYMENT_NAME is not configured" in err for err in report.errors)
+
+
+def test_validate_settings_valid_azure_openai(tmp_path: Path) -> None:
+    """validate_settings passes when Azure OpenAI is selected with all required fields."""
+    cfg = Settings(
+        _env_file=None,
+        output_root=tmp_path / "out",
+        cache_dir=tmp_path / "cache",
+        log_dir=tmp_path / "logs",
+        translation_provider=TranslationProvider.AZURE_OPENAI,
+        azure_openai_api_key="azure-test-key",
+        azure_openai_endpoint="https://myresource.openai.azure.com/",
+        azure_openai_deployment_name="gpt-4o",
+        hf_token="hf_test_token",
+        device="cpu",
+    )
+
+    with patch("shutil.which", return_value="/usr/bin/tool"):
+        report = validate_settings(cfg)
+        assert report.is_valid
+        assert len(report.errors) == 0
+
+
 def test_validate_settings_missing_hf_token_is_warning(tmp_path: Path) -> None:
     """Missing HF_TOKEN produces a warning but does not invalidate startup configuration."""
     cfg = Settings(

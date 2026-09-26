@@ -116,6 +116,11 @@ class HomeScreen(QWidget):
         self._table.verticalHeader().setVisible(False)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
+        self._table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
+        self._table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._table.verticalScrollBar().setSingleStep(16)
 
         main_layout.addWidget(self._table, stretch=1)
 

@@ -33,8 +33,10 @@ def test_build_system_prompt_with_glossary() -> None:
     """Prompt includes injected glossary terms."""
     glossary = {"Lord Ming": "ព្រះអង្គម្ចាស់មីង", "Sword": "ដាវបុរាណ"}
     prompt = _build_system_prompt("zh", glossary)
-    assert "Lord Ming: ព្រះអង្គម្ចាស់មីង" in prompt
-    assert "Sword: ដាវបុរាណ" in prompt
+    assert 'source="Lord Ming"' in prompt
+    assert 'target="ព្រះអង្គម្ចាស់មីង"' in prompt
+    assert 'source="Sword"' in prompt
+    assert 'target="ដាវបុរាណ"' in prompt
 
 
 def test_extract_json_array_pure_json() -> None:
@@ -96,6 +98,115 @@ async def test_translate_anthropic_missing_key(monkeypatch: pytest.MonkeyPatch) 
             source_language="en",
             provider=TranslationProvider.ANTHROPIC,
         )
+
+
+@pytest.mark.asyncio
+async def test_translate_gemini_missing_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Raises ValueError when Gemini is active but key is empty."""
+    monkeypatch.setattr(settings, "gemini_api_key", "")
+    with pytest.raises(ValueError, match="GEMINI_API_KEY is not configured"):
+        await translate_transcript_segments(
+            [{"id": 0, "text": "hello"}],
+            source_language="en",
+            provider=TranslationProvider.GEMINI,
+        )
+
+
+@pytest.mark.asyncio
+async def test_translate_azure_openai_missing_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Raises ValueError when Azure OpenAI provider is selected but credentials are missing."""
+    monkeypatch.setattr(settings, "azure_openai_api_key", "")
+    monkeypatch.setattr(settings, "azure_openai_endpoint", "https://mock.openai.azure.com/")
+    monkeypatch.setattr(settings, "azure_openai_deployment_name", "gpt-4o")
+
+    with pytest.raises(ValueError, match="AZURE_OPENAI_API_KEY is not configured"):
+        await translate_transcript_segments(
+            [{"id": 0, "start": 0.0, "end": 1.0, "text": "Hello"}],
+            source_language="en",
+            provider=TranslationProvider.AZURE_OPENAI,
+        )
+
+
+@pytest.mark.asyncio
+async def test_translate_azure_openai_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Successfully translates segments with mocked Azure OpenAI response."""
+    monkeypatch.setattr(settings, "azure_openai_api_key", "azure-test-key")
+    monkeypatch.setattr(settings, "azure_openai_endpoint", "https://mock.openai.azure.com/")
+    monkeypatch.setattr(settings, "azure_openai_deployment_name", "gpt-4o")
+
+    mock_response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content='[{"id": 0, "translated_text": "សួស្តី"}, {"id": 1, "translated_text": "អរគុណ"}]'
+                )
+            )
+        ]
+    )
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    input_segments = [
+        {"id": 0, "start": 0.0, "end": 1.5, "text": "Hello"},
+        {"id": 1, "start": 1.6, "end": 2.5, "text": "Thank you"},
+    ]
+
+    with patch("openai.AsyncAzureOpenAI", return_value=mock_client):
+        translated = await translate_transcript_segments(
+            input_segments,
+            source_language="en",
+            provider=TranslationProvider.AZURE_OPENAI,
+        )
+
+    assert len(translated) == 2
+    assert translated[0]["translated_text"] == "សួស្តី"
+    assert translated[1]["translated_text"] == "អរគុណ"
+
+
+@pytest.mark.asyncio
+async def test_translate_gemini_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Successfully translates segments with mocked Gemini response."""
+    monkeypatch.setattr(settings, "gemini_api_key", "AIzaSy-test-key")
+
+    mock_json = {
+        "candidates": [
+            {
+                "content": {
+                    "parts": [
+                        {
+                            "text": '[{"id": 0, "translated_text": "សួស្តី"}, {"id": 1, "translated_text": "អរគុណ"}]'
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = mock_json
+    mock_resp.raise_for_status = MagicMock()
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__.return_value = mock_client
+    mock_client.__aexit__.return_value = None
+    mock_client.post.return_value = mock_resp
+
+    input_segments = [
+        {"id": 0, "start": 0.0, "end": 1.5, "text": "Hello"},
+        {"id": 1, "start": 1.6, "end": 2.5, "text": "Thank you"},
+    ]
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        translated = await translate_transcript_segments(
+            input_segments,
+            source_language="en",
+            provider=TranslationProvider.GEMINI,
+        )
+
+    assert len(translated) == 2
+    assert translated[0]["translated_text"] == "សួស្តី"
+    assert translated[1]["translated_text"] == "អរគុណ"
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -105,6 +106,11 @@ class WorkspaceScreen(QWidget):
         self._table.verticalHeader().setVisible(False)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
+        self._table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
+        self._table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._table.verticalScrollBar().setSingleStep(16)
         self._table.cellDoubleClicked.connect(self._on_table_row_double_clicked)
         main_layout.addWidget(self._table, stretch=1)
 
@@ -138,6 +144,28 @@ class WorkspaceScreen(QWidget):
         layout.addLayout(title_box)
 
         layout.addStretch(1)
+
+        # Workflow Mode Selector (let user select mode when starting dubbing)
+        mode_box = QHBoxLayout()
+        mode_box.setSpacing(6)
+        lbl_mode = QLabel("Workflow Mode:")
+        lbl_mode.setStyleSheet("font-size: 12px; font-weight: 600; color: #475569;")
+        self._cmb_workflow_mode = QComboBox()
+        self._cmb_workflow_mode.setMinimumWidth(180)
+        self._cmb_workflow_mode.addItem("Both (Dubbing + Subtitles)", PipelineOutputMode.BOTH)
+        self._cmb_workflow_mode.addItem("Subtitles Only", PipelineOutputMode.SUBTITLES_ONLY)
+        self._cmb_workflow_mode.addItem("Voice Dubbing Only", PipelineOutputMode.VOICE_DUBBING_ONLY)
+
+        idx = self._cmb_workflow_mode.findData(settings.output_mode)
+        if idx >= 0:
+            self._cmb_workflow_mode.setCurrentIndex(idx)
+        self._cmb_workflow_mode.currentIndexChanged.connect(self._on_workflow_mode_changed)
+
+        mode_box.addWidget(lbl_mode)
+        mode_box.addWidget(self._cmb_workflow_mode)
+        layout.addLayout(mode_box)
+
+        layout.addSpacing(6)
 
         # Global Control Buttons
         self._btn_start_all = QPushButton("Start All Episodes")
@@ -236,6 +264,12 @@ class WorkspaceScreen(QWidget):
         self._lbl_project_meta.setText(
             f"Target: Khmer (km)  |  Path: {project.source_folder}  |  Episodes: {len(self._episodes)}"
         )
+
+        mode_idx = self._cmb_workflow_mode.findData(settings.output_mode)
+        if mode_idx >= 0:
+            self._cmb_workflow_mode.blockSignals(True)
+            self._cmb_workflow_mode.setCurrentIndex(mode_idx)
+            self._cmb_workflow_mode.blockSignals(False)
 
         self._populate_table()
         self._recalculate_kpis()
@@ -375,7 +409,19 @@ class WorkspaceScreen(QWidget):
     # -------------------------------------------------------------------------
     # Job Control Actions
     # -------------------------------------------------------------------------
+    def _on_workflow_mode_changed(self) -> None:
+        """Update active pipeline workflow mode when user changes the dropdown."""
+        mode = self._cmb_workflow_mode.currentData()
+        if mode:
+            settings.output_mode = mode
+            self._log_activity(f"Workflow mode set to: {mode.value}")
+
     def _enqueue_episode(self, episode_id: int) -> None:
+        # Ensure active workflow mode from dropdown is applied
+        mode = self._cmb_workflow_mode.currentData()
+        if mode:
+            settings.output_mode = mode
+
         self._job_manager.enqueue(episode_id)
         if episode_id in self._row_status_labels:
             lbl = self._row_status_labels[episode_id]
@@ -388,6 +434,10 @@ class WorkspaceScreen(QWidget):
 
     def _on_start_all_clicked(self) -> None:
         """Enqueue all pending or failed episodes into JobManager."""
+        mode = self._cmb_workflow_mode.currentData()
+        if mode:
+            settings.output_mode = mode
+
         count = 0
         for ep in self._episodes:
             if ep.status in (EpisodeStatus.PENDING, EpisodeStatus.FAILED):

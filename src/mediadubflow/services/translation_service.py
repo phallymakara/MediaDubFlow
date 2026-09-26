@@ -175,12 +175,64 @@ async def _translate_batch_openai(
 
     from openai import AsyncOpenAI  # noqa: PLC0415
 
-    client = AsyncOpenAI(api_key=settings.openai_api_key, timeout=60.0)
+    client_kwargs: dict[str, Any] = {"api_key": settings.openai_api_key, "timeout": 60.0}
+    if settings.openai_base_url.strip():
+        client_kwargs["base_url"] = settings.openai_base_url.strip()
+
+    client = AsyncOpenAI(**client_kwargs)
     user_content = json.dumps(batch_lines, ensure_ascii=False)
 
     logger.debug("Requesting OpenAI translation for {} lines", len(batch_lines))
     response = await client.chat.completions.create(
         model=settings.openai_model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        temperature=0.3,
+    )
+
+    response_text = response.choices[0].message.content or "[]"
+    parsed_items = _extract_json_array(response_text)
+
+    return {
+        int(item["id"]): str(item.get("translated_text", "")).strip()
+        for item in parsed_items
+        if "id" in item
+    }
+
+
+async def _translate_batch_azure_openai(
+    batch_lines: list[dict[str, Any]],
+    system_prompt: str,
+) -> dict[int, str]:
+    """Translate a batch of lines using Azure OpenAI."""
+    if not settings.azure_openai_api_key.strip():
+        raise ValueError(
+            "Azure OpenAI translation provider is active, but AZURE_OPENAI_API_KEY is not configured in .env."
+        )
+    if not settings.azure_openai_endpoint.strip():
+        raise ValueError(
+            "Azure OpenAI translation provider is active, but AZURE_OPENAI_ENDPOINT is not configured in .env."
+        )
+    if not settings.azure_openai_deployment_name.strip():
+        raise ValueError(
+            "Azure OpenAI translation provider is active, but AZURE_OPENAI_DEPLOYMENT_NAME is not configured in .env."
+        )
+
+    from openai import AsyncAzureOpenAI  # noqa: PLC0415
+
+    client = AsyncAzureOpenAI(
+        azure_endpoint=settings.azure_openai_endpoint.strip(),
+        api_key=settings.azure_openai_api_key.strip(),
+        api_version=settings.azure_openai_api_version.strip() or "2024-08-01-preview",
+        timeout=60.0,
+    )
+    user_content = json.dumps(batch_lines, ensure_ascii=False)
+
+    logger.debug("Requesting Azure OpenAI translation for {} lines", len(batch_lines))
+    response = await client.chat.completions.create(
+        model=settings.azure_openai_deployment_name.strip(),
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
@@ -210,7 +262,11 @@ async def _translate_batch_anthropic(
 
     from anthropic import AsyncAnthropic  # noqa: PLC0415
 
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key, timeout=60.0)
+    client_kwargs: dict[str, Any] = {"api_key": settings.anthropic_api_key, "timeout": 60.0}
+    if settings.anthropic_base_url.strip():
+        client_kwargs["base_url"] = settings.anthropic_base_url.strip()
+
+    client = AsyncAnthropic(**client_kwargs)
     user_content = json.dumps(batch_lines, ensure_ascii=False)
 
     logger.debug("Requesting Anthropic translation for {} lines", len(batch_lines))
@@ -226,6 +282,55 @@ async def _translate_batch_anthropic(
 
     # Combine text from content blocks
     response_text = "".join(block.text for block in response.content if hasattr(block, "text"))
+    parsed_items = _extract_json_array(response_text)
+
+    return {
+        int(item["id"]): str(item.get("translated_text", "")).strip()
+        for item in parsed_items
+        if "id" in item
+    }
+
+
+async def _translate_batch_gemini(
+    batch_lines: list[dict[str, Any]],
+    system_prompt: str,
+) -> dict[int, str]:
+    """Translate a batch of lines using the Google Gemini API."""
+    if not settings.gemini_api_key.strip():
+        raise ValueError(
+            "Gemini translation provider is active, but GEMINI_API_KEY is not configured in .env."
+        )
+
+    import httpx  # noqa: PLC0415
+
+    model = settings.gemini_model or "gemini-2.0-flash"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    user_content = json.dumps(batch_lines, ensure_ascii=False)
+
+    payload = {
+        "system_instruction": {"parts": [{"text": system_prompt}]},
+        "contents": [{"role": "user", "parts": [{"text": user_content}]}],
+        "generationConfig": {
+            "temperature": 0.3,
+            "response_mime_type": "application/json",
+        },
+    }
+
+    logger.debug("Requesting Gemini translation for {} lines", len(batch_lines))
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(
+            url,
+            params={"key": settings.gemini_api_key},
+            json=payload,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+    candidates = data.get("candidates", [])
+    if not candidates:
+        raise ValueError("Gemini returned empty candidate response.")
+    parts = candidates[0].get("content", {}).get("parts", [])
+    response_text = "".join(p.get("text", "") for p in parts)
     parsed_items = _extract_json_array(response_text)
 
     return {
@@ -292,6 +397,14 @@ async def translate_transcript_segments(
         if active_provider == TranslationProvider.OPENAI:
             batch_result = await _call_with_retry(
                 lambda b=batch_input, s=system_prompt: _translate_batch_openai(b, s)
+            )
+        elif active_provider == TranslationProvider.AZURE_OPENAI:
+            batch_result = await _call_with_retry(
+                lambda b=batch_input, s=system_prompt: _translate_batch_azure_openai(b, s)
+            )
+        elif active_provider == TranslationProvider.GEMINI:
+            batch_result = await _call_with_retry(
+                lambda b=batch_input, s=system_prompt: _translate_batch_gemini(b, s)
             )
         elif active_provider == TranslationProvider.ANTHROPIC:
             batch_result = await _call_with_retry(

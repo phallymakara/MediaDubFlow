@@ -18,7 +18,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class TranslationProvider(StrEnum):
     OPENAI = "openai"
+    AZURE_OPENAI = "azure_openai"
     ANTHROPIC = "anthropic"
+    GEMINI = "gemini"
 
 
 class STTBackend(StrEnum):
@@ -63,12 +65,39 @@ class Settings(BaseSettings):
         default=TranslationProvider.OPENAI,
         description="LLM provider used for Khmer translation",
     )
+    # OpenAI / Compatible
     openai_api_key: str = Field(default="", description="OpenAI API key")
     openai_model: str = Field(default="gpt-4o", description="OpenAI model name")
+    openai_base_url: str = Field(default="", description="OpenAI custom endpoint / base URL (optional)")
+
+    # Azure OpenAI
+    azure_openai_endpoint: str = Field(
+        default="",
+        description="Azure OpenAI endpoint URL, e.g. https://<resource>.openai.azure.com/",
+    )
+    azure_openai_api_key: str = Field(default="", description="Azure OpenAI API key")
+    azure_openai_deployment_name: str = Field(
+        default="gpt-4o",
+        description="Azure OpenAI deployment / model name",
+    )
+    azure_openai_api_version: str = Field(
+        default="2024-08-01-preview",
+        description="Azure OpenAI API version",
+    )
+
+    # Google Gemini
+    gemini_api_key: str = Field(default="", description="Google Gemini API key")
+    gemini_model: str = Field(default="gemini-2.0-flash", description="Google Gemini model name")
+
+    # Anthropic
     anthropic_api_key: str = Field(default="", description="Anthropic API key")
     anthropic_model: str = Field(
         default="claude-3-5-sonnet-20241022",
         description="Anthropic model name",
+    )
+    anthropic_base_url: str = Field(
+        default="",
+        description="Anthropic custom endpoint / base URL (optional)",
     )
 
     # --- Speech-to-Text ---
@@ -244,11 +273,29 @@ def validate_settings(cfg: Settings | None = None) -> SettingsValidationReport:
             "Ensure the appropriate async driver is installed."
         )
 
-    # 3. Translation provider API key validation
+    # 3. Translation provider API key & endpoint validation
     if target_settings.translation_provider == TranslationProvider.OPENAI:
         if not target_settings.openai_api_key.strip():
             report.errors.append(
                 "OpenAI translation provider is selected, but OPENAI_API_KEY is not configured in .env."
+            )
+    elif target_settings.translation_provider == TranslationProvider.AZURE_OPENAI:
+        if not target_settings.azure_openai_api_key.strip():
+            report.errors.append(
+                "Azure OpenAI translation provider is selected, but AZURE_OPENAI_API_KEY is not configured in .env."
+            )
+        if not target_settings.azure_openai_endpoint.strip():
+            report.errors.append(
+                "Azure OpenAI translation provider is selected, but AZURE_OPENAI_ENDPOINT is not configured in .env."
+            )
+        if not target_settings.azure_openai_deployment_name.strip():
+            report.errors.append(
+                "Azure OpenAI translation provider is selected, but AZURE_OPENAI_DEPLOYMENT_NAME is not configured in .env."
+            )
+    elif target_settings.translation_provider == TranslationProvider.GEMINI:
+        if not target_settings.gemini_api_key.strip():
+            report.errors.append(
+                "Gemini translation provider is selected, but GEMINI_API_KEY is not configured in .env."
             )
     elif target_settings.translation_provider == TranslationProvider.ANTHROPIC:
         if not target_settings.anthropic_api_key.strip():

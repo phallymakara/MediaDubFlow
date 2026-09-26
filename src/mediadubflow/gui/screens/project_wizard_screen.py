@@ -21,7 +21,9 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
+    QDialog,
     QFileDialog,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -29,6 +31,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -36,6 +39,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mediadubflow.config.settings import PipelineOutputMode, settings
 from mediadubflow.database.session import get_session
 from mediadubflow.services.project_service import create_project_from_folder
 from mediadubflow.utils.episode_detector import detect_episodes
@@ -70,8 +74,8 @@ class ProjectWizardScreen(QWidget):
 
     def _setup_ui(self) -> None:
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(40, 32, 40, 32)
-        main_layout.setSpacing(20)
+        main_layout.setContentsMargins(36, 20, 36, 20)
+        main_layout.setSpacing(16)
 
         # 1. Header & Stepper Indicator
         self._stepper_widget = self._build_stepper()
@@ -140,9 +144,22 @@ class ProjectWizardScreen(QWidget):
     # -------------------------------------------------------------------------
     def _build_step1_media(self) -> QWidget:
         page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(14)
+
+        # Scrollable form content for small laptop screens & accessibility
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.verticalScrollBar().setSingleStep(16)
+
+        content_widget = QWidget()
+        layout = QVBoxLayout(content_widget)
+        layout.setContentsMargins(0, 0, 8, 0)
+        layout.setSpacing(14)
 
         title = QLabel("Select Media Folder")
         title.setObjectName("sectionTitle")
@@ -196,7 +213,10 @@ class ProjectWizardScreen(QWidget):
 
         layout.addStretch(1)
 
-        # Actions Row
+        scroll_area.setWidget(content_widget)
+        page_layout.addWidget(scroll_area, stretch=1)
+
+        # Actions Row (pinned at bottom)
         actions_row = QHBoxLayout()
         btn_cancel = QPushButton("Cancel")
         btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -210,7 +230,7 @@ class ProjectWizardScreen(QWidget):
         actions_row.addWidget(btn_cancel)
         actions_row.addStretch(1)
         actions_row.addWidget(self._btn_step1_next)
-        layout.addLayout(actions_row)
+        page_layout.addLayout(actions_row)
 
         return page
 
@@ -331,6 +351,11 @@ class ProjectWizardScreen(QWidget):
         self._table_episodes.verticalHeader().setVisible(False)
         self._table_episodes.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table_episodes.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._table_episodes.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
+        self._table_episodes.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
+        self._table_episodes.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._table_episodes.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._table_episodes.verticalScrollBar().setSingleStep(16)
         layout.addWidget(self._table_episodes, stretch=1)
 
         self._err_episodes = QLabel("")
@@ -416,9 +441,22 @@ class ProjectWizardScreen(QWidget):
     # -------------------------------------------------------------------------
     def _build_step3_localization(self) -> QWidget:
         page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(14)
+
+        # Scrollable form content so all options are comfortably accessible
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.verticalScrollBar().setSingleStep(16)
+
+        content_widget = QWidget()
+        layout = QVBoxLayout(content_widget)
+        layout.setContentsMargins(0, 0, 8, 0)
+        layout.setSpacing(14)
 
         title = QLabel("Localization Setup")
         title.setObjectName("sectionTitle")
@@ -445,7 +483,7 @@ class ProjectWizardScreen(QWidget):
         self._cmb_source_lang.addItem("Vietnamese (vi)", "vi")
         layout.addWidget(self._cmb_source_lang)
 
-        layout.addSpacing(8)
+        layout.addSpacing(6)
 
         # Target Language (Fixed to Khmer)
         tgt_lbl = QLabel("Target Language")
@@ -457,26 +495,36 @@ class ProjectWizardScreen(QWidget):
         txt_target.setStyleSheet("color: #10b981; font-weight: 600;")
         layout.addWidget(txt_target)
 
-        layout.addSpacing(8)
+        layout.addSpacing(6)
 
         # Workflow Mode
-        mode_box = QGroupBox("Workflow Mode")
+        mode_box = QGroupBox("Workflow Mode (Select for this dubbing run)")
+        mode_box.setStyleSheet("font-weight: 600; font-size: 13px; color: #0f172a;")
         mode_layout = QVBoxLayout(mode_box)
-        mode_layout.setSpacing(6)
+        mode_layout.setSpacing(8)
 
-        self._rb_subtitles = QRadioButton("Subtitles Only (.srt, .ass)")
-        self._rb_subtitles.setChecked(True)
-        self._rb_dubbing = QRadioButton("Full Dubbing (Synthesized Audio + Subtitles)")
+        self._rb_both = QRadioButton("Both (Voice Dubbing + Subtitles) — Synthesize audio dub & embed subtitles")
+        self._rb_subtitles = QRadioButton("Subtitles Only — Generate timed Khmer subtitles (.srt, .ass, no audio dubbing)")
+        self._rb_dubbing = QRadioButton("Voice Dubbing Only — Synthesize Khmer voice audio track (no subtitles)")
+
+        if settings.output_mode == PipelineOutputMode.SUBTITLES_ONLY:
+            self._rb_subtitles.setChecked(True)
+        elif settings.output_mode == PipelineOutputMode.VOICE_DUBBING_ONLY:
+            self._rb_dubbing.setChecked(True)
+        else:
+            self._rb_both.setChecked(True)
 
         mode_group = QButtonGroup(self)
+        mode_group.addButton(self._rb_both)
         mode_group.addButton(self._rb_subtitles)
         mode_group.addButton(self._rb_dubbing)
 
+        mode_layout.addWidget(self._rb_both)
         mode_layout.addWidget(self._rb_subtitles)
         mode_layout.addWidget(self._rb_dubbing)
         layout.addWidget(mode_box)
 
-        layout.addSpacing(8)
+        layout.addSpacing(6)
 
         # Series Glossary (Optional)
         glossary_lbl = QLabel("Series Glossary & Character Names (Optional)")
@@ -507,7 +555,10 @@ class ProjectWizardScreen(QWidget):
 
         layout.addStretch(1)
 
-        # Actions Row
+        scroll_area.setWidget(content_widget)
+        page_layout.addWidget(scroll_area, stretch=1)
+
+        # Actions Row (pinned at bottom)
         actions_row = QHBoxLayout()
         btn_back = QPushButton("← Back")
         btn_back.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -521,7 +572,7 @@ class ProjectWizardScreen(QWidget):
         actions_row.addWidget(btn_back)
         actions_row.addStretch(1)
         actions_row.addWidget(self._btn_create)
-        layout.addLayout(actions_row)
+        page_layout.addLayout(actions_row)
 
         return page
 
@@ -541,6 +592,14 @@ class ProjectWizardScreen(QWidget):
                 self._err_glossary.setText(f"Invalid JSON: {exc}")
                 self._err_glossary.setVisible(True)
                 return
+
+        # Apply chosen workflow mode for this project / dubbing session
+        if self._rb_subtitles.isChecked():
+            settings.output_mode = PipelineOutputMode.SUBTITLES_ONLY
+        elif self._rb_dubbing.isChecked():
+            settings.output_mode = PipelineOutputMode.VOICE_DUBBING_ONLY
+        else:
+            settings.output_mode = PipelineOutputMode.BOTH
 
         # Collect parameters
         project_name = self._txt_name.text().strip()
@@ -609,4 +668,10 @@ class ProjectWizardScreen(QWidget):
         self._err_episodes.setVisible(False)
         self._err_glossary.setVisible(False)
         self._lbl_create_status.setVisible(False)
+        if settings.output_mode == PipelineOutputMode.SUBTITLES_ONLY:
+            self._rb_subtitles.setChecked(True)
+        elif settings.output_mode == PipelineOutputMode.VOICE_DUBBING_ONLY:
+            self._rb_dubbing.setChecked(True)
+        else:
+            self._rb_both.setChecked(True)
         self._update_stepper(0)

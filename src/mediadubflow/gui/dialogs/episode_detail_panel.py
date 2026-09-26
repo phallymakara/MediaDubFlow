@@ -38,7 +38,8 @@ class EpisodeDetailPanel(QDialog):
         super().__init__(parent)
         self.episode = episode
         self.setWindowTitle(f"Episode {episode.episode_number:02d} Review — MediaDubFlow")
-        self.setMinimumSize(700, 520)
+        self.setMinimumSize(640, 420)
+        self.resize(720, 520)
         self.setModal(True)
 
         self._setup_ui()
@@ -103,6 +104,10 @@ class EpisodeDetailPanel(QDialog):
 
         self._txt_preview = QPlainTextEdit()
         self._txt_preview.setReadOnly(True)
+        self._txt_preview.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self._txt_preview.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._txt_preview.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._txt_preview.verticalScrollBar().setSingleStep(16)
         self._txt_preview.setStyleSheet(
             "background-color: #ffffff; border: 1px solid #cbd5e1; font-family: monospace; font-size: 12px;"
         )
