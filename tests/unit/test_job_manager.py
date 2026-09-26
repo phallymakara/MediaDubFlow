@@ -124,8 +124,10 @@ async def test_job_manager_enqueue_and_complete(
         project = await create_project(
             session, name="Drama", source_folder=str(tmp_path), output_folder=str(tmp_path)
         )
+        source_file = tmp_path / "ep1.mp4"
+        source_file.touch()
         episode = await create_episode(
-            session, project_id=project.id, episode_number=1, source_file=str(tmp_path / "ep1.mp4")
+            session, project_id=project.id, episode_number=1, source_file=str(source_file)
         )
         await session.commit()
         ep_id = episode.id
@@ -194,8 +196,10 @@ async def test_job_manager_skips_stage_with_checkpoint(
         project = await create_project(
             session, name="Drama", source_folder=str(tmp_path), output_folder=str(tmp_path)
         )
+        source_file = tmp_path / "ep1.mp4"
+        source_file.touch()
         episode = await create_episode(
-            session, project_id=project.id, episode_number=1, source_file=str(tmp_path / "ep1.mp4")
+            session, project_id=project.id, episode_number=1, source_file=str(source_file)
         )
         await session.commit()
         ep_id = episode.id
@@ -248,8 +252,10 @@ async def test_job_manager_stage_failure(
         project = await create_project(
             session, name="Drama", source_folder=str(tmp_path), output_folder=str(tmp_path)
         )
+        source_file = tmp_path / "ep1.mp4"
+        source_file.touch()
         episode = await create_episode(
-            session, project_id=project.id, episode_number=1, source_file=str(tmp_path / "ep1.mp4")
+            session, project_id=project.id, episode_number=1, source_file=str(source_file)
         )
         await session.commit()
         ep_id = episode.id
@@ -295,8 +301,10 @@ async def test_job_manager_stage_exception(
         project = await create_project(
             session, name="Drama", source_folder=str(tmp_path), output_folder=str(tmp_path)
         )
+        source_file = tmp_path / "ep1.mp4"
+        source_file.touch()
         episode = await create_episode(
-            session, project_id=project.id, episode_number=1, source_file=str(tmp_path / "ep1.mp4")
+            session, project_id=project.id, episode_number=1, source_file=str(source_file)
         )
         await session.commit()
         ep_id = episode.id
@@ -375,8 +383,10 @@ async def test_job_manager_persists_language_updates(
         project = await create_project(
             session, name="Drama", source_folder=str(tmp_path), output_folder=str(tmp_path)
         )
+        source_file = tmp_path / "ep1.mp4"
+        source_file.touch()
         episode = await create_episode(
-            session, project_id=project.id, episode_number=1, source_file=str(tmp_path / "ep1.mp4")
+            session, project_id=project.id, episode_number=1, source_file=str(source_file)
         )
         await session.commit()
         ep_id = episode.id
@@ -436,8 +446,10 @@ async def test_job_manager_loads_project_glossary_into_context(
             output_folder=str(tmp_path),
             glossary_json='{"King": "ស្តេច"}',
         )
+        source_file = tmp_path / "ep1.mp4"
+        source_file.touch()
         episode = await create_episode(
-            session, project_id=project.id, episode_number=1, source_file=str(tmp_path / "ep1.mp4")
+            session, project_id=project.id, episode_number=1, source_file=str(source_file)
         )
         await session.commit()
         ep_id = episode.id

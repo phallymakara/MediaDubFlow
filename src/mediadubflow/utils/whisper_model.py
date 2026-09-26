@@ -7,9 +7,12 @@ to avoid expensive re-initializations and GPU VRAM reallocations.
 
 from __future__ import annotations
 
+import re
 import threading
 
+import huggingface_hub
 from faster_whisper import WhisperModel
+from faster_whisper.utils import _MODELS
 from loguru import logger
 
 from mediadubflow.config.settings import settings
@@ -17,6 +20,62 @@ from mediadubflow.config.settings import settings
 # Thread-safe cache storing (model_size, device, compute_type) -> WhisperModel
 _MODEL_CACHE: dict[tuple[str, str, str], WhisperModel] = {}
 _CACHE_LOCK = threading.Lock()
+
+
+def ensure_whisper_model_downloaded(model_size: str | None = None) -> str:
+    """
+    Ensure the Faster-Whisper model is downloaded to the local HuggingFace cache.
+
+    If not cached yet, downloads it with a live progress percentage bar in the terminal.
+    Returns the local path to the model snapshot directory.
+    """
+    import os  # noqa: PLC0415
+
+    resolved_size = model_size or settings.whisper_model_size
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return resolved_size
+
+    if re.match(r".*/.*", resolved_size):
+        repo_id = resolved_size
+    else:
+        repo_id = _MODELS.get(resolved_size, resolved_size)
+
+    allow_patterns = [
+        "config.json",
+        "preprocessor_config.json",
+        "model.bin",
+        "tokenizer.json",
+        "vocabulary.*",
+    ]
+
+    try:
+        path = huggingface_hub.snapshot_download(
+            repo_id=repo_id,
+            allow_patterns=allow_patterns,
+            local_files_only=True,
+        )
+        logger.info("Faster-Whisper model '{}' is ready locally at: {}", resolved_size, path)
+        return path
+    except Exception:
+        logger.info(
+            "Downloading Faster-Whisper model '{}' ({}) from Hugging Face Hub...",
+            resolved_size,
+            repo_id,
+        )
+        try:
+            path = huggingface_hub.snapshot_download(
+                repo_id=repo_id,
+                allow_patterns=allow_patterns,
+            )
+            logger.info(
+                "Faster-Whisper model '{}' downloaded successfully to: {}",
+                resolved_size,
+                path,
+            )
+            return path
+        except Exception as exc:
+            logger.error("Failed to download Faster-Whisper model '{}': {}", resolved_size, exc)
+            raise
 
 
 def get_whisper_model(
@@ -57,6 +116,11 @@ def get_whisper_model(
         if cache_key in _MODEL_CACHE:
             logger.debug("Reusing cached WhisperModel for {}", cache_key)
             return _MODEL_CACHE[cache_key]
+
+        try:
+            ensure_whisper_model_downloaded(resolved_size)
+        except Exception as exc:
+            logger.warning("Could not pre-verify Whisper model cache: {}", exc)
 
         logger.info(
             "Loading Faster-Whisper model: size={} device={} compute_type={}",

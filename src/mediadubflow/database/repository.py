@@ -102,8 +102,10 @@ async def get_project(session: AsyncSession, project_id: int) -> Project | None:
 
 
 async def list_projects(session: AsyncSession) -> list[Project]:
-    """Return all projects ordered by creation date descending."""
-    result = await session.execute(select(Project).order_by(Project.created_at.desc()))
+    """Return all projects ordered by creation date descending with episodes eagerly loaded."""
+    result = await session.execute(
+        select(Project).options(selectinload(Project.episodes)).order_by(Project.created_at.desc())
+    )
     return list(result.scalars().all())
 
 

@@ -140,7 +140,7 @@ class SettingsDialog(QDialog):
         layout_gemini.addRow("Google Gemini API Key:", self._txt_gemini_key)
 
         self._txt_gemini_model = QLineEdit()
-        self._txt_gemini_model.setPlaceholderText("gemini-2.0-flash")
+        self._txt_gemini_model.setPlaceholderText("gemini-3.8-flash")
         layout_gemini.addRow("Model Name:", self._txt_gemini_model)
 
         # Page D: Anthropic

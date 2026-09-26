@@ -208,7 +208,6 @@ class EpisodeDetailPanel(QDialog):
         allowed_roots = [
             settings.output_root.resolve(),
             settings.cache_dir.resolve(),
-            settings.storage_root.resolve(),
         ]
         if self.episode.source_file:
             try:

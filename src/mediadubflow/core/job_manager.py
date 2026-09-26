@@ -180,51 +180,72 @@ class JobManager(QObject):
         try:
             async with sem:
                 logger.info("Processing episode_id={}", episode_id)
-                ctx = await self._build_context(episode_id)
-                if ctx is None:
-                    return
-
-            for stage in self._stages:
-                if stage.can_skip(ctx):
-                    logger.debug(
-                        "[Episode {}] Skipping stage '{}' (checkpoint found)",
-                        episode_id,
-                        stage.name,
-                    )
-                    continue
-
-                stage_status = STAGE_STATUS_MAP.get(stage.name, EpisodeStatus.QUEUED)
-                await self._set_status(episode_id, stage_status)
-                self.progress_updated.emit(episode_id, stage.name, 0)
-
                 try:
-                    result = await stage.run(ctx)
-                except asyncio.CancelledError:
-                    logger.info("[Episode {}] Stage '{}' was cancelled", episode_id, stage.name)
-                    safe_msg = f"{stage.name} cancelled by user"
-                    await self._set_failed(episode_id, safe_msg)
-                    self.episode_failed.emit(episode_id, safe_msg)
-                    raise
+                    ctx = await self._build_context(episode_id)
                 except Exception as exc:
-                    logger.exception("[Episode {}] Stage '{}' raised an exception: {}", episode_id, stage.name, exc)
-                    safe_msg = f"{stage.name} failed: {type(exc).__name__}"
+                    logger.exception("[Episode {}] Failed to build context: {}", episode_id, exc)
+                    safe_msg = f"Initialization error: {type(exc).__name__}"
                     await self._set_failed(episode_id, safe_msg)
                     self.episode_failed.emit(episode_id, safe_msg)
                     return
 
-                if not result.success:
-                    await self._set_failed(episode_id, result.message)
-                    self.episode_failed.emit(episode_id, result.message)
+                if ctx is None:
+                    safe_msg = "Invalid or missing episode source file"
+                    await self._set_failed(episode_id, safe_msg)
+                    self.episode_failed.emit(episode_id, safe_msg)
                     return
 
-                # Apply context updates returned by the stage and persist checkpoints to DB.
-                await self._persist_stage_updates(episode_id, ctx, result.context_updates)
+                for stage in self._stages:
+                    if stage.can_skip(ctx):
+                        logger.debug(
+                            "[Episode {}] Skipping stage '{}' (checkpoint found)",
+                            episode_id,
+                            stage.name,
+                        )
+                        continue
 
-                self.progress_updated.emit(episode_id, stage.name, 100)
+                    stage_status = STAGE_STATUS_MAP.get(stage.name, EpisodeStatus.QUEUED)
+                    await self._set_status(episode_id, stage_status)
+                    self.progress_updated.emit(episode_id, stage.name, 0)
+
+                    try:
+                        result = await stage.run(ctx)
+                    except asyncio.CancelledError:
+                        logger.info("[Episode {}] Stage '{}' was cancelled", episode_id, stage.name)
+                        safe_msg = f"{stage.name} cancelled by user"
+                        await self._set_failed(episode_id, safe_msg)
+                        self.episode_failed.emit(episode_id, safe_msg)
+                        raise
+                    except Exception as exc:
+                        logger.exception(
+                            "[Episode {}] Stage '{}' raised an exception: {}",
+                            episode_id,
+                            stage.name,
+                            exc,
+                        )
+                        safe_msg = f"{stage.name} failed: {exc}"
+                        await self._set_failed(episode_id, safe_msg)
+                        self.episode_failed.emit(episode_id, safe_msg)
+                        return
+
+                    if not result.success:
+                        await self._set_failed(episode_id, result.message)
+                        self.episode_failed.emit(episode_id, result.message)
+                        return
+
+                    # Apply context updates returned by the stage and persist checkpoints to DB.
+                    await self._persist_stage_updates(episode_id, ctx, result.context_updates)
+
+                    self.progress_updated.emit(episode_id, stage.name, 100)
 
                 await self._set_status(episode_id, EpisodeStatus.DONE)
                 self.episode_completed.emit(episode_id)
                 logger.info("Episode {} completed successfully", episode_id)
+        except Exception as exc:
+            logger.exception("[Episode {}] Unexpected pipeline error: {}", episode_id, exc)
+            safe_msg = f"Pipeline error: {type(exc).__name__}"
+            await self._set_failed(episode_id, safe_msg)
+            self.episode_failed.emit(episode_id, safe_msg)
         finally:
             self._active_or_queued.discard(episode_id)
 
@@ -301,7 +322,7 @@ class JobManager(QObject):
             allowed_dirs = (
                 work_dir.resolve(),
                 output_dir.resolve(),
-                settings.storage_root.resolve(),
+                settings.output_root.resolve(),
             )
 
             def _safe_checkpoint(raw: str | None) -> Path | None:

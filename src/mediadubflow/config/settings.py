@@ -87,7 +87,7 @@ class Settings(BaseSettings):
 
     # Google Gemini
     gemini_api_key: str = Field(default="", description="Google Gemini API key")
-    gemini_model: str = Field(default="gemini-2.0-flash", description="Google Gemini model name")
+    gemini_model: str = Field(default="gemini-3.8-flash", description="Google Gemini model name")
 
     # Anthropic
     anthropic_api_key: str = Field(default="", description="Anthropic API key")
@@ -183,6 +183,11 @@ class Settings(BaseSettings):
         except ImportError:
             pass
         return "cpu"
+
+    @property
+    def storage_root(self) -> Path:
+        """Alias for output_root for backwards compatibility."""
+        return self.output_root
 
 
 # Singleton settings instance — import this from anywhere in the app.

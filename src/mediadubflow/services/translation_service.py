@@ -303,8 +303,11 @@ async def _translate_batch_gemini(
 
     import httpx  # noqa: PLC0415
 
-    model = settings.gemini_model or "gemini-2.0-flash"
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    configured_model = settings.gemini_model or "gemini-3.1-flash-lite"
+    models_to_try = [configured_model]
+    if configured_model != "gemini-3.1-flash-lite":
+        models_to_try.append("gemini-3.1-flash-lite")
+
     user_content = json.dumps(batch_lines, ensure_ascii=False)
 
     payload = {
@@ -316,15 +319,39 @@ async def _translate_batch_gemini(
         },
     }
 
-    logger.debug("Requesting Gemini translation for {} lines", len(batch_lines))
+    last_exc: Exception | None = None
+    data: dict[str, Any] = {}
     async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
-            url,
-            params={"key": settings.gemini_api_key},
-            json=payload,
-        )
-        response.raise_for_status()
-        data = response.json()
+        for model in models_to_try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+            logger.debug(
+                "Requesting Gemini translation for {} lines using model={}",
+                len(batch_lines),
+                model,
+            )
+            try:
+                response = await client.post(
+                    url,
+                    params={"key": settings.gemini_api_key},
+                    json=payload,
+                )
+                response.raise_for_status()
+                data = response.json()
+                break
+            except httpx.HTTPStatusError as exc:
+                last_exc = exc
+                if exc.response.status_code in (404, 503) and model != models_to_try[-1]:
+                    logger.warning(
+                        "Gemini model '{}' returned {}. Falling back to '{}'...",
+                        model,
+                        exc.response.status_code,
+                        models_to_try[-1],
+                    )
+                    continue
+                raise
+        else:
+            if last_exc:
+                raise last_exc
 
     candidates = data.get("candidates", [])
     if not candidates:

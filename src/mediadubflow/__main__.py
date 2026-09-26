@@ -26,6 +26,14 @@ def main() -> None:
     for error in validation_report.errors:
         logger.error("Startup configuration error: {}", error)
 
+    # Ensure Faster-Whisper model is downloaded before launching GUI, showing terminal progress
+    from mediadubflow.utils.whisper_model import ensure_whisper_model_downloaded  # noqa: PLC0415
+
+    try:
+        ensure_whisper_model_downloaded()
+    except Exception as exc:
+        logger.warning("Could not pre-download Whisper model at startup: {}", exc)
+
     # Ensure Qt platform plugins (qwindows.dll) can be located even in deep/OneDrive paths.
     import os  # noqa: PLC0415
     from pathlib import Path  # noqa: PLC0415
