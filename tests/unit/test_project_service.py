@@ -20,6 +20,7 @@ from mediadubflow.services.project_service import (
     _sanitize_folder_name,
     create_project_from_folder,
     rescan_project_episodes,
+    update_project_details,
 )
 
 
@@ -241,3 +242,57 @@ async def test_create_project_with_glossary(session: AsyncSession, tmp_path: Pat
     await session.commit()
 
     assert project.glossary_json == '{"Emperor": "ព្រះចៅអធិរាជ"}'
+
+
+@pytest.mark.asyncio
+async def test_update_project_details_success(session: AsyncSession, tmp_path: Path) -> None:
+    """Updating project name and destination successfully persists changes."""
+    source_dir = tmp_path / "drama_source"
+    source_dir.mkdir()
+    (source_dir / "ep1.mp4").touch()
+
+    project = await create_project_from_folder(
+        session,
+        name="Old Name",
+        source_folder=source_dir,
+    )
+    await session.commit()
+
+    new_out = tmp_path / "custom_out"
+    updated = await update_project_details(
+        session,
+        project.id,
+        name="New Name",
+        output_folder=new_out,
+        target_language="en",
+    )
+    await session.commit()
+
+    assert updated.name == "New Name"
+    assert updated.output_folder == str(new_out.resolve())
+    assert updated.target_language == "en"
+
+
+@pytest.mark.asyncio
+async def test_update_project_details_empty_name(session: AsyncSession, tmp_path: Path) -> None:
+    """Updating project with empty name raises ValueError."""
+    source_dir = tmp_path / "drama_source"
+    source_dir.mkdir()
+    (source_dir / "ep1.mp4").touch()
+
+    project = await create_project_from_folder(
+        session,
+        name="Valid Name",
+        source_folder=source_dir,
+    )
+    await session.commit()
+
+    with pytest.raises(ValueError, match="Project name cannot be empty"):
+        await update_project_details(session, project.id, name="   ")
+
+
+@pytest.mark.asyncio
+async def test_update_project_details_not_found(session: AsyncSession) -> None:
+    """Updating a non-existent project id raises ValueError."""
+    with pytest.raises(ValueError, match="Project with id 99999 not found"):
+        await update_project_details(session, 99999, name="Ghost")

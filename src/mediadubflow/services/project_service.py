@@ -20,6 +20,7 @@ from mediadubflow.database.repository import (
     create_project,
     delete_project,
     get_project,
+    update_project,
 )
 from mediadubflow.models.orm import Episode, Project
 from mediadubflow.utils.episode_detector import detect_episodes
@@ -214,3 +215,50 @@ async def delete_project_with_files(session: AsyncSession, project_id: int) -> b
                     logger.warning("Failed to clean up cache directory {}: {}", ep_cache, exc)
 
     return deleted
+
+
+async def update_project_details(
+    session: AsyncSession,
+    project_id: int,
+    *,
+    name: str,
+    output_folder: str | Path | None = None,
+    target_language: str | None = None,
+    source_language: str | None = None,
+) -> Project:
+    """
+    Update project metadata with validation.
+
+    Args:
+        session: Active database AsyncSession.
+        project_id: Primary key of the project to update.
+        name: New human-readable project title.
+        output_folder: Optional new destination directory.
+        target_language: Optional new target language code.
+        source_language: Optional new source language code.
+
+    Returns:
+        The updated Project ORM instance.
+
+    Raises:
+        ValueError: If name is empty or project_id does not exist.
+    """
+    clean_name = name.strip()
+    if not clean_name:
+        raise ValueError("Project name cannot be empty.")
+
+    resolved_output = str(Path(output_folder).resolve()) if output_folder else None
+
+    project = await update_project(
+        session,
+        project_id,
+        name=clean_name,
+        output_folder=resolved_output,
+        target_language=target_language,
+        source_language=source_language,
+    )
+    if project is None:
+        raise ValueError(f"Project with id {project_id} not found.")
+
+    await session.flush()
+    return project

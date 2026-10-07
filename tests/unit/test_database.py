@@ -103,6 +103,40 @@ async def test_update_project_glossary(session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_project(session: AsyncSession) -> None:
+    """update_project modifies name, output_folder, and language."""
+    from mediadubflow.database.repository import update_project
+
+    project = await create_project(
+        session,
+        name="Original Title",
+        source_folder="/videos/orig",
+        output_folder="/output/orig",
+        target_language="km",
+    )
+    await session.commit()
+
+    updated = await update_project(
+        session,
+        project.id,
+        name="Renamed Title",
+        output_folder="/output/new",
+        target_language="en",
+    )
+    await session.commit()
+
+    assert updated is not None
+    assert updated.name == "Renamed Title"
+    assert updated.output_folder == "/output/new"
+    assert updated.target_language == "en"
+
+    # Test non-existent project returns None
+    missing = await update_project(session, 99999, name="Ghost")
+    assert missing is None
+
+
+
+@pytest.mark.asyncio
 async def test_list_projects(session: AsyncSession) -> None:
     """list_projects returns all inserted projects."""
     await create_project(session, name="Drama A", source_folder="/a", output_folder="/oa")

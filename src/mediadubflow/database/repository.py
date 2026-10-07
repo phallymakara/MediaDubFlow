@@ -89,6 +89,51 @@ async def update_project_glossary(
     logger.debug("Project id={} glossary updated", project_id)
 
 
+async def update_project(
+    session: AsyncSession,
+    project_id: int,
+    *,
+    name: str | None = None,
+    output_folder: str | Path | None = None,
+    target_language: str | None = None,
+    source_language: str | None = None,
+) -> Project | None:
+    """
+    Update mutable fields on an existing project row.
+
+    Args:
+        session:         Active async session.
+        project_id:      Primary key of the project.
+        name:            Optional new human-readable project title.
+        output_folder:   Optional new destination output directory.
+        target_language: Optional new target language code.
+        source_language: Optional new source language code.
+
+    Returns:
+        The updated Project ORM instance, or None if not found.
+    """
+    project = await session.get(Project, project_id)
+    if project is None:
+        logger.warning("update_project: project id={} not found", project_id)
+        return None
+
+    if name is not None:
+        clean_name = name.strip()
+        if clean_name:
+            project.name = clean_name
+    if output_folder is not None:
+        project.output_folder = str(output_folder)
+    if target_language is not None:
+        project.target_language = target_language
+    if source_language is not None:
+        project.source_language = source_language
+
+    await session.flush()
+    logger.info("Updated project id={} name={!r}", project_id, project.name)
+    return project
+
+
+
 async def get_project(session: AsyncSession, project_id: int) -> Project | None:
     """
     Fetch a project by primary key, eagerly loading its episodes.

@@ -140,12 +140,148 @@ QTableWidget {{
 QTableWidget::item {{
     padding: 8px;
     border-bottom: 1px solid #f1f5f9;
+    color: {COLOR_TEXT_PRIMARY};
 }}
 
 QTableWidget::item:selected {{
     background-color: #eff6ff;
     color: {COLOR_TEXT_PRIMARY};
 }}
+
+/* Table Search Input */
+QLineEdit#projectSearchInput {{
+    background-color: {COLOR_SURFACE};
+    color: {COLOR_TEXT_PRIMARY};
+    border: 1px solid {COLOR_BORDER_INPUT};
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 13px;
+}}
+
+QLineEdit#projectSearchInput:focus {{
+    border: 1px solid {COLOR_BORDER_FOCUS};
+}}
+
+/* Compact Table Action Buttons */
+QPushButton.tableBtnOpen {{
+    background-color: {COLOR_PRIMARY};
+    color: #ffffff;
+    border: 1px solid {COLOR_PRIMARY_HOVER};
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+}}
+
+QPushButton.tableBtnOpen:hover {{
+    background-color: {COLOR_PRIMARY_HOVER};
+}}
+
+QPushButton.tableBtnOpen:pressed {{
+    background-color: {COLOR_PRIMARY_PRESSED};
+}}
+
+QPushButton.tableBtnEdit {{
+    background-color: {COLOR_SURFACE};
+    color: {COLOR_TEXT_PRIMARY};
+    border: 1px solid {COLOR_BORDER_INPUT};
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 500;
+}}
+
+QPushButton.tableBtnEdit:hover {{
+    background-color: #f1f5f9;
+    border-color: {COLOR_TEXT_MUTED};
+}}
+
+QPushButton.tableBtnDelete {{
+    background-color: {COLOR_SURFACE};
+    color: {COLOR_ERROR};
+    border: 1px solid #fca5a5;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 500;
+}}
+
+QPushButton.tableBtnDelete:hover {{
+    background-color: #fef2f2;
+    border-color: {COLOR_ERROR};
+    color: {COLOR_ERROR};
+}}
+
+/* Three-Dot Action Button */
+QPushButton.threeDotButton {{
+    background-color: {COLOR_SURFACE};
+    color: {COLOR_TEXT_SECONDARY};
+    border: 1px solid {COLOR_BORDER_INPUT};
+    border-radius: 4px;
+    font-size: 16px;
+    font-weight: 700;
+    min-width: 32px;
+    max-width: 36px;
+    min-height: 28px;
+    max-height: 30px;
+    padding: 0px;
+}}
+
+QPushButton.threeDotButton:hover {{
+    background-color: #f1f5f9;
+    border-color: {COLOR_TEXT_MUTED};
+    color: {COLOR_PRIMARY};
+}}
+
+QPushButton.threeDotButton:pressed {{
+    background-color: #e2e8f0;
+}}
+
+/* Context Menus / Dropdowns */
+QMenu {{
+    background-color: {COLOR_SURFACE};
+    border: 1px solid {COLOR_BORDER};
+    border-radius: 6px;
+    padding: 4px;
+    color: {COLOR_TEXT_PRIMARY};
+}}
+
+QMenu::item {{
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 500;
+    color: {COLOR_TEXT_PRIMARY};
+    min-width: 140px;
+}}
+
+QMenu::item:selected {{
+    background-color: #f1f5f9;
+    color: {COLOR_TEXT_PRIMARY};
+}}
+
+QMenu::separator {{
+    height: 1px;
+    background-color: {COLOR_BORDER};
+    margin: 4px 6px;
+}}
+
+/* Mini Table Progress Bar */
+QProgressBar.tableProgressBar {{
+    background-color: #e2e8f0;
+    border: none;
+    border-radius: 3px;
+    min-height: 6px;
+    max-height: 6px;
+    text-align: center;
+}}
+
+QProgressBar.tableProgressBar::chunk {{
+    background-color: {COLOR_PRIMARY};
+    border-radius: 3px;
+}}
+
+
 
 QHeaderView::section {{
     background-color: {COLOR_CANVAS};

@@ -104,6 +104,7 @@ class WorkspaceScreen(QWidget):
         self._table.setColumnWidth(0, 85)
         self._table.setColumnWidth(4, 110)
         self._table.verticalHeader().setVisible(False)
+        self._table.verticalHeader().setDefaultSectionSize(52)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
@@ -285,6 +286,7 @@ class WorkspaceScreen(QWidget):
 
         for row, ep in enumerate(self._episodes):
             self._episode_row_map[ep.id] = row
+            self._table.setRowHeight(row, 52)
 
             # Col 0: Episode Tag
             tag = f"EP {ep.episode_number:02d}" if ep.episode_number > 0 else "Special"
@@ -371,10 +373,11 @@ class WorkspaceScreen(QWidget):
         return widget, prog_bar, stage_lbl
 
     def _update_action_button(self, btn: QPushButton, ep: Episode) -> None:
-        try:
-            btn.clicked.disconnect()
-        except RuntimeError:
-            pass
+        if btn.receivers(btn.clicked) > 0:
+            try:
+                btn.clicked.disconnect()
+            except RuntimeError:
+                pass
 
         if ep.status == EpisodeStatus.DONE:
             btn.setText("Review")

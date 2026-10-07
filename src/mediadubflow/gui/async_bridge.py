@@ -45,9 +45,17 @@ class AsyncBridge(QThread):
         try:
             self._loop.run_forever()
         finally:
+            pending = asyncio.all_tasks(self._loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                self._loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
             self._loop.run_until_complete(self._loop.shutdown_asyncgens())
             self._loop.close()
             logger.debug("AsyncBridge QThread event loop closed")
+
 
     def wait_until_ready(self, timeout: float = 2.0) -> bool:
         """Wait until the background event loop is running."""
@@ -91,18 +99,17 @@ class AsyncBridge(QThread):
 
         asyncio.run_coroutine_threadsafe(_wrapper(), self._loop)
 
-    @staticmethod
-    def _handle_result_on_main(result: Any, callback: Callable[[Any], None]) -> None:
+    def _handle_result_on_main(self, result: Any, callback: Callable[[Any], None]) -> None:
         """Invoked on the Qt main thread to deliver the coroutine result."""
         try:
             callback(result)
         except Exception as exc:
             logger.exception("Error in AsyncBridge on_success callback: {}", exc)
 
-    @staticmethod
-    def _handle_error_on_main(exc: Exception, error_callback: Callable[[Exception], None]) -> None:
+    def _handle_error_on_main(self, exc: Exception, error_callback: Callable[[Exception], None]) -> None:
         """Invoked on the Qt main thread to deliver the error."""
         try:
             error_callback(exc)
         except Exception as callback_exc:
             logger.exception("Error in AsyncBridge on_error callback: {}", callback_exc)
+
