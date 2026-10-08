@@ -86,6 +86,7 @@ class TranslationStage(PipelineStage):
                 source_language=ctx.source_language,
                 target_language="km",
                 glossary=glossary,
+                progress_callback=ctx.report_progress,
             )
         except Exception as exc:
             msg = f"Translation error: {exc}"

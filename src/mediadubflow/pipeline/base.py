@@ -40,6 +40,16 @@ class StageContext:
     output_video_path: Path | None = None
     # Arbitrary stage-specific metadata
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Callback to report intra-stage progress (0-100%)
+    progress_callback: Any = None
+
+    def report_progress(self, percent: int) -> None:
+        """Report intra-stage progress percentage (0-100)."""
+        if self.progress_callback and callable(self.progress_callback):
+            try:
+                self.progress_callback(max(0, min(100, int(percent))))
+            except Exception:
+                pass
 
 
 @dataclass

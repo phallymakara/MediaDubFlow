@@ -24,6 +24,8 @@ def test_settings_default_values() -> None:
     assert cfg.max_concurrent_episodes == 2
     assert cfg.log_level == "INFO"
     assert cfg.log_json is False
+    assert cfg.tts_speed == 1.5
+    assert cfg.original_audio_volume == 0.8
 
 
 def test_settings_env_override(monkeypatch) -> None:

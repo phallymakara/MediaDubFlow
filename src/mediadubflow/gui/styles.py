@@ -441,4 +441,105 @@ QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
 QScrollBar::corner {{
     background: transparent;
 }}
+
+/* Media Folder Drop Zone */
+QFrame#mediaDropZone {{
+    background-color: {COLOR_SURFACE};
+    border: 2px dashed {COLOR_BORDER_INPUT};
+    border-radius: 8px;
+}}
+
+QFrame#mediaDropZone:hover {{
+    border-color: {COLOR_PRIMARY};
+    background-color: #f8fafc;
+}}
+
+QFrame#mediaDropZone[dragOver="true"] {{
+    border: 2px dashed {COLOR_PRIMARY};
+    background-color: #eff6ff;
+}}
+
+QFrame#mediaDropZone[hasFolder="true"] {{
+    background-color: {COLOR_SURFACE};
+    border: 1px solid {COLOR_BORDER};
+    border-radius: 8px;
+}}
+
+/* Stepper Bar Container */
+QWidget#stepperContainer {{
+    background-color: transparent;
+    border-bottom: 1px solid {COLOR_BORDER};
+}}
+
+/* Format Tag Badges */
+QLabel.formatTag {{
+    background-color: #f1f5f9;
+    color: {COLOR_TEXT_SECONDARY};
+    border: 1px solid {COLOR_BORDER};
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-size: 11px;
+    font-weight: 500;
+}}
+
+/* Tab Widget */
+QTabWidget::pane {{
+    border: 1px solid {COLOR_BORDER};
+    background-color: {COLOR_SURFACE};
+    border-radius: 4px;
+}}
+
+QTabBar::tab {{
+    background-color: {COLOR_CANVAS};
+    color: {COLOR_TEXT_SECONDARY};
+    border: 1px solid {COLOR_BORDER};
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    padding: 8px 16px;
+    font-weight: 500;
+    margin-right: 4px;
+}}
+
+QTabBar::tab:selected {{
+    background-color: {COLOR_SURFACE};
+    color: {COLOR_PRIMARY};
+    font-weight: 600;
+    border-bottom: 2px solid {COLOR_PRIMARY};
+}}
+
+QTabBar::tab:hover:!selected {{
+    background-color: #f1f5f9;
+    color: {COLOR_TEXT_PRIMARY};
+}}
+
+/* Horizontal Sliders (Speed & Volume Controls) */
+QSlider::groove:horizontal {{
+    height: 6px;
+    background-color: #e2e8f0;
+    border-radius: 3px;
+}}
+
+QSlider::sub-page:horizontal {{
+    background-color: {COLOR_PRIMARY};
+    border-radius: 3px;
+}}
+
+QSlider::handle:horizontal {{
+    background-color: {COLOR_SURFACE};
+    border: 2px solid {COLOR_PRIMARY};
+    width: 14px;
+    height: 14px;
+    margin: -4px 0;
+    border-radius: 7px;
+}}
+
+QSlider::handle:horizontal:hover {{
+    background-color: #eff6ff;
+    border-color: {COLOR_PRIMARY_HOVER};
+}}
+
+QSlider::handle:horizontal:pressed {{
+    background-color: {COLOR_PRIMARY};
+}}
 """

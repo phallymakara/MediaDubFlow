@@ -45,6 +45,7 @@ class TTSGenerationStage(PipelineStage):
                     model="tts-1",
                     voice="alloy",
                     input=text,
+                    speed=max(0.25, min(4.0, float(settings.tts_speed))),
                 )
                 await response.astream_to_file(temp_audio)
             else:
@@ -52,7 +53,12 @@ class TTSGenerationStage(PipelineStage):
                 import edge_tts  # noqa: PLC0415
 
                 voice = settings.tts_voice or "km-KH-PisethNeural"
-                communicate = edge_tts.Communicate(text, voice)
+                rate_pct = int(round((settings.tts_speed - 1.0) * 100))
+                rate_str = f"{rate_pct:+d}%"
+                vol_pct = int(round((settings.tts_volume - 1.0) * 100))
+                vol_str = f"{vol_pct:+d}%"
+
+                communicate = edge_tts.Communicate(text, voice, rate=rate_str, volume=vol_str)
                 await communicate.save(str(temp_audio))
 
             # Convert to standardized 16kHz 16-bit mono WAV using FFmpeg
@@ -143,7 +149,10 @@ class TTSGenerationStage(PipelineStage):
                             out_wav.writeframes(frames)
                             current_sample_pos += in_wav.getnframes()
                     except Exception as wave_exc:
-                        logger.warning("Could not append audio chunk {}: {}", chunk_wav, wave_exc)
+                        logger.warning("Failed appending TTS chunk #{}: {}", idx, wave_exc)
+
+                if len(segments) > 0:
+                    ctx.report_progress(int(((idx + 1) / len(segments)) * 100))
 
         ctx.tts_audio_path = final_tts_wav
         logger.info(

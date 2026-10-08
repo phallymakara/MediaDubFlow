@@ -151,6 +151,65 @@ class JobManager(QObject):
         logger.info("Enqueued episode_id={}", episode_id)
         return True
 
+    def redub_episode(self, episode_id: int, new_speed: float | None = None) -> bool:
+        """
+        Invalidate downstream audio and video checkpoints for an already dubbed episode,
+        apply the new speech speed, and enqueue for rapid re-dubbing.
+        """
+        if new_speed is not None:
+            settings.tts_speed = round(float(new_speed), 2)
+            logger.info("[Episode {}] Updated TTS speed to {:.2f}x for re-dubbing", episode_id, settings.tts_speed)
+
+        # 1. Clean up audio and video artifacts from work_dir and output_dir
+        work_dir = settings.cache_dir / f"episode_{episode_id}"
+        output_dir = settings.output_root / f"episode_{episode_id}"
+
+        for p in (
+            work_dir / f"dialogue_{episode_id}.wav",
+            work_dir / f"mixed_{episode_id}.wav",
+        ):
+            if p.exists():
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+
+        chunks_dir = work_dir / "tts_chunks"
+        if chunks_dir.exists():
+            import shutil  # noqa: PLC0415
+
+            try:
+                shutil.rmtree(chunks_dir, ignore_errors=True)
+            except OSError:
+                pass
+
+        # Also remove existing output video so VideoRendering re-muxes with new audio
+        if output_dir.exists():
+            for vid in output_dir.glob("*_dubbed.mp4"):
+                try:
+                    vid.unlink()
+                except OSError:
+                    pass
+
+        # 2. Reset database checkpoints in background if loop is active
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._reset_checkpoints_for_redub(episode_id))
+        except RuntimeError:
+            pass
+
+        # 3. Enqueue episode (clear active status if it was stuck as completed)
+        self._active_or_queued.discard(episode_id)
+        return self.enqueue(episode_id)
+
+    async def _reset_checkpoints_for_redub(self, episode_id: int) -> None:
+        """Reset downstream database checkpoint paths and set status to QUEUED."""
+        async with get_session() as session:
+            await update_episode_checkpoint(session, episode_id=episode_id, field="tts_audio_path", value="")
+            await update_episode_checkpoint(session, episode_id=episode_id, field="mixed_audio_path", value="")
+            await update_episode_checkpoint(session, episode_id=episode_id, field="output_video_path", value="")
+            await update_episode_status(session, episode_id=episode_id, status=EpisodeStatus.QUEUED)
+
     async def _dispatch_loop(self) -> None:
         """Pull episodes from the queue and run them concurrently."""
         tasks: set[asyncio.Task[None]] = set()
@@ -195,18 +254,33 @@ class JobManager(QObject):
                     self.episode_failed.emit(episode_id, safe_msg)
                     return
 
-                for stage in self._stages:
+                total_stages = max(1, len(self._stages))
+                for stage_idx, stage in enumerate(self._stages):
                     if stage.can_skip(ctx):
                         logger.debug(
                             "[Episode {}] Skipping stage '{}' (checkpoint found)",
                             episode_id,
                             stage.name,
                         )
+                        skip_pct = int(((stage_idx + 1) / total_stages) * 100)
+                        self.progress_updated.emit(
+                            episode_id,
+                            f"Step {stage_idx + 1}/{total_stages}: {stage.name} (Cached)",
+                            skip_pct,
+                        )
                         continue
 
                     stage_status = STAGE_STATUS_MAP.get(stage.name, EpisodeStatus.QUEUED)
                     await self._set_status(episode_id, stage_status)
-                    self.progress_updated.emit(episode_id, stage.name, 0)
+
+                    def _on_stage_progress(intra_pct: int, s_idx: int = stage_idx, s_name: str = stage.name) -> None:
+                        clamped_intra = max(0, min(100, intra_pct))
+                        overall_pct = int(((s_idx + (clamped_intra / 100.0)) / total_stages) * 100)
+                        stage_desc = f"Step {s_idx + 1}/{total_stages}: {s_name}"
+                        self.progress_updated.emit(episode_id, stage_desc, overall_pct)
+
+                    ctx.progress_callback = _on_stage_progress
+                    _on_stage_progress(0)
 
                     try:
                         result = await stage.run(ctx)
@@ -236,8 +310,9 @@ class JobManager(QObject):
                     # Apply context updates returned by the stage and persist checkpoints to DB.
                     await self._persist_stage_updates(episode_id, ctx, result.context_updates)
 
-                    self.progress_updated.emit(episode_id, stage.name, 100)
+                    _on_stage_progress(100)
 
+                self.progress_updated.emit(episode_id, "Complete", 100)
                 await self._set_status(episode_id, EpisodeStatus.DONE)
                 self.episode_completed.emit(episode_id)
                 logger.info("Episode {} completed successfully", episode_id)

@@ -375,6 +375,7 @@ async def translate_transcript_segments(
     glossary: dict[str, str] | None = None,
     provider: TranslationProvider | None = None,
     batch_size: int = 40,
+    progress_callback: Callable[[int], None] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Translate transcript segments into Khmer using the configured LLM provider.
@@ -389,6 +390,7 @@ async def translate_transcript_segments(
         glossary: Optional mapping of names/terms to preferred Khmer translations.
         provider: Override translation provider (defaults to settings.translation_provider).
         batch_size: Number of dialogue lines sent per LLM API request.
+        progress_callback: Optional callable receiving progress percentage (0-100).
 
     Returns:
         List of enriched segment dictionaries with 'translated_text' added.
@@ -441,6 +443,12 @@ async def translate_transcript_segments(
             raise ValueError(f"Unsupported translation provider: {active_provider}")
 
         translated_map.update(batch_result)
+        if progress_callback and callable(progress_callback):
+            batch_pct = int(min(100, ((i + len(chunk)) / len(segments)) * 100))
+            try:
+                progress_callback(batch_pct)
+            except Exception:
+                pass
 
     # Build final enriched segments preserving original structure
     enriched_segments: list[dict[str, Any]] = []

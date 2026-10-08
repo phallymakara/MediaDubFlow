@@ -16,6 +16,7 @@ import dotenv
 from loguru import logger
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QFormLayout,
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSlider,
     QSpinBox,
     QStackedWidget,
     QVBoxLayout,
@@ -192,6 +194,71 @@ class SettingsDialog(QDialog):
         self._spin_concurrency.setValue(2)
         general_form_layout.addRow("Concurrent Episodes:", self._spin_concurrency)
 
+        # TTS & Audio Dubbing Controls
+        tts_header = QLabel("TTS Voice Dubbing & Audio Mixing")
+        tts_header.setStyleSheet("font-size: 14px; font-weight: 700; color: #0f172a; margin-top: 14px;")
+        general_form_layout.addRow(tts_header)
+
+        # Mute Original Speaker Checkbox
+        self._chk_mute_original = QCheckBox("Mute Original Voice (Silences original speaker during dialogue, keeps background sound)")
+        self._chk_mute_original.setWordWrap(True)
+        self._chk_mute_original.setStyleSheet("font-weight: 600; font-size: 13px; color: #0f172a;")
+        general_form_layout.addRow("", self._chk_mute_original)
+
+        # TTS Voice Selection
+        self._cmb_tts_voice = QComboBox()
+        self._cmb_tts_voice.addItem("Piseth (Male, Khmer Natural) — km-KH-PisethNeural", "km-KH-PisethNeural")
+        self._cmb_tts_voice.addItem("Sreymom (Female, Khmer Natural) — km-KH-SreymomNeural", "km-KH-SreymomNeural")
+        general_form_layout.addRow("TTS Voice:", self._cmb_tts_voice)
+
+        # Sound Volume Control (0% to 200%)
+        vol_box = QHBoxLayout()
+        vol_box.setSpacing(8)
+        self._slider_volume = QSlider(Qt.Orientation.Horizontal)
+        self._slider_volume.setRange(0, 200)
+        self._slider_volume.setSingleStep(5)
+        self._slider_volume.setPageStep(10)
+        self._slider_volume.setToolTip("Horizontal scroll or drag to increase/decrease TTS sound volume")
+        self._lbl_volume_val = QLabel("120%")
+        self._lbl_volume_val.setFixedWidth(44)
+        self._lbl_volume_val.setStyleSheet("font-size: 12px; font-weight: 600; color: #2563eb;")
+        self._slider_volume.valueChanged.connect(lambda v: self._lbl_volume_val.setText(f"{v}%"))
+        vol_box.addWidget(self._slider_volume, stretch=1)
+        vol_box.addWidget(self._lbl_volume_val)
+        general_form_layout.addRow("TTS Sound Volume:", vol_box)
+
+        # Background Sound Volume Control (0% to 150%)
+        bg_vol_box = QHBoxLayout()
+        bg_vol_box.setSpacing(8)
+        self._slider_bg_volume = QSlider(Qt.Orientation.Horizontal)
+        self._slider_bg_volume.setRange(0, 150)
+        self._slider_bg_volume.setSingleStep(5)
+        self._slider_bg_volume.setPageStep(10)
+        self._slider_bg_volume.setToolTip("Horizontal scroll or drag to increase/decrease background sound volume")
+        self._lbl_bg_vol_val = QLabel("80%")
+        self._lbl_bg_vol_val.setFixedWidth(44)
+        self._lbl_bg_vol_val.setStyleSheet("font-size: 12px; font-weight: 600; color: #2563eb;")
+        self._slider_bg_volume.valueChanged.connect(lambda v: self._lbl_bg_vol_val.setText(f"{v}%"))
+        bg_vol_box.addWidget(self._slider_bg_volume, stretch=1)
+        bg_vol_box.addWidget(self._lbl_bg_vol_val)
+        general_form_layout.addRow("Background Sound Volume:", bg_vol_box)
+
+        # Speech Speed Horizontal Slider (0.50x to 2.00x)
+        speed_box = QHBoxLayout()
+        speed_box.setSpacing(8)
+        self._slider_speed = QSlider(Qt.Orientation.Horizontal)
+        self._slider_speed.setRange(50, 200)
+        self._slider_speed.setSingleStep(5)
+        self._slider_speed.setPageStep(10)
+        self._slider_speed.setToolTip("Horizontal scroll or drag to increase/decrease speech speed (0.50x to 2.00x)")
+        self._lbl_speed_val = QLabel("1.00x")
+        self._lbl_speed_val.setFixedWidth(44)
+        self._lbl_speed_val.setStyleSheet("font-size: 12px; font-weight: 600; color: #2563eb;")
+        self._slider_speed.valueChanged.connect(lambda v: self._lbl_speed_val.setText(f"{v/100:.2f}x"))
+        speed_box.addWidget(self._slider_speed, stretch=1)
+        speed_box.addWidget(self._lbl_speed_val)
+        general_form_layout.addRow("Speech Speed:", speed_box)
+
         form_container_layout.addLayout(general_form_layout)
 
         # Status note
@@ -273,6 +340,24 @@ class SettingsDialog(QDialog):
 
         # 5. Concurrency
         self._spin_concurrency.setValue(settings.max_concurrent_episodes)
+
+        # 6. TTS Audio & Speed Settings
+        voice_idx = self._cmb_tts_voice.findData(settings.tts_voice)
+        if voice_idx >= 0:
+            self._cmb_tts_voice.setCurrentIndex(voice_idx)
+
+        self._chk_mute_original.setChecked(settings.mute_original_speaker)
+        vol_val = int(round(settings.tts_volume * 100))
+        self._slider_volume.setValue(vol_val)
+        self._lbl_volume_val.setText(f"{vol_val}%")
+
+        bg_vol_val = int(round(settings.original_audio_volume * 100))
+        self._slider_bg_volume.setValue(bg_vol_val)
+        self._lbl_bg_vol_val.setText(f"{bg_vol_val}%")
+
+        speed_val = int(round(settings.tts_speed * 100))
+        self._slider_speed.setValue(speed_val)
+        self._lbl_speed_val.setText(f"{settings.tts_speed:.2f}x")
 
         self._on_provider_changed()
 
@@ -367,6 +452,19 @@ class SettingsDialog(QDialog):
             dotenv.set_key(str(env_path), "WHISPER_MODEL_SIZE", str(whisper_size))
             dotenv.set_key(str(env_path), "DEVICE", str(device))
             dotenv.set_key(str(env_path), "MAX_CONCURRENT_EPISODES", str(concurrency))
+            dotenv.set_key(str(env_path), "TTS_VOICE", str(self._cmb_tts_voice.currentData()))
+            dotenv.set_key(str(env_path), "TTS_SPEED", str(round(self._slider_speed.value() / 100.0, 2)))
+            dotenv.set_key(str(env_path), "TTS_VOLUME", str(round(self._slider_volume.value() / 100.0, 2)))
+            dotenv.set_key(str(env_path), "ORIGINAL_AUDIO_VOLUME", str(round(self._slider_bg_volume.value() / 100.0, 2)))
+            dotenv.set_key(str(env_path), "MUTE_ORIGINAL_SPEAKER", "true" if self._chk_mute_original.isChecked() else "false")
+
+            # Update settings object
+            settings.tts_voice = str(self._cmb_tts_voice.currentData())
+            settings.tts_speed = round(self._slider_speed.value() / 100.0, 2)
+            settings.tts_volume = round(self._slider_volume.value() / 100.0, 2)
+            settings.original_audio_volume = round(self._slider_bg_volume.value() / 100.0, 2)
+            settings.mute_original_speaker = self._chk_mute_original.isChecked()
+
             logger.info("Settings saved to .env at {}", env_path)
         except Exception as exc:
             logger.warning("Could not persist settings to .env: {}", exc)

@@ -14,14 +14,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, override
 
 from loguru import logger
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDropEvent, QMouseEvent
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
-    QDialog,
     QFileDialog,
     QFrame,
     QGroupBox,
@@ -42,10 +42,222 @@ from PySide6.QtWidgets import (
 from mediadubflow.config.settings import PipelineOutputMode, settings
 from mediadubflow.database.session import get_session
 from mediadubflow.services.project_service import create_project_from_folder
-from mediadubflow.utils.episode_detector import detect_episodes
+from mediadubflow.utils.episode_detector import VIDEO_EXTENSIONS, detect_episodes
 
 if TYPE_CHECKING:
     from mediadubflow.gui.async_bridge import AsyncBridge
+
+
+class MediaFolderDropZone(QFrame):
+    """
+    Modern drag-and-drop intake zone for media directories and video files.
+
+    Supports:
+    - Drag-and-drop of directories or video files directly from file managers.
+    - Click anywhere to open the system folder browser.
+    - Two clean visual states: empty state with format badges and selected state
+      with folder name, truncated path, and real-time video file count.
+    """
+
+    folder_dropped = Signal(Path)
+    browse_requested = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("mediaDropZone")
+        self.setAcceptDrops(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setProperty("hasFolder", False)
+        self.setProperty("dragOver", False)
+
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(28, 24, 28, 24)
+        self._layout.setSpacing(10)
+
+        # 1. Empty State Container
+        self._empty_container = QWidget()
+        empty_layout = QVBoxLayout(self._empty_container)
+        empty_layout.setContentsMargins(0, 0, 0, 0)
+        empty_layout.setSpacing(6)
+        empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        icon_lbl = QLabel("📁")
+        icon_lbl.setStyleSheet("font-size: 32px;")
+        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(icon_lbl)
+
+        lbl_prompt = QLabel("Drag and drop your media folder here")
+        lbl_prompt.setStyleSheet("font-size: 15px; font-weight: 600; color: #0f172a;")
+        lbl_prompt.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(lbl_prompt)
+
+        lbl_sub = QLabel("or click anywhere in this card to browse files on your computer")
+        lbl_sub.setStyleSheet("font-size: 13px; color: #64748b;")
+        lbl_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(lbl_sub)
+
+        empty_layout.addSpacing(6)
+
+        btn_browse_drop = QPushButton("Browse Folder...")
+        btn_browse_drop.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_browse_drop.setStyleSheet("padding: 6px 18px; font-size: 13px; font-weight: 500;")
+        btn_browse_drop.clicked.connect(self.browse_requested.emit)
+        empty_layout.addWidget(btn_browse_drop, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        empty_layout.addSpacing(8)
+
+        formats_row = QHBoxLayout()
+        formats_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        formats_row.setSpacing(6)
+        formats_label = QLabel("Supported formats:")
+        formats_label.setStyleSheet("font-size: 11px; color: #94a3b8; font-weight: 500;")
+        formats_row.addWidget(formats_label)
+
+        for fmt in [".mp4", ".mkv", ".mov", ".webm", ".avi"]:
+            chip = QLabel(fmt)
+            chip.setProperty("class", "formatTag")
+            formats_row.addWidget(chip)
+
+        empty_layout.addLayout(formats_row)
+        self._layout.addWidget(self._empty_container)
+
+        # 2. Selected State Container
+        self._selected_container = QWidget()
+        selected_layout = QVBoxLayout(self._selected_container)
+        selected_layout.setContentsMargins(0, 0, 0, 0)
+        selected_layout.setSpacing(10)
+
+        header_row = QHBoxLayout()
+        status_badge = QLabel("✓ Media Folder Selected")
+        status_badge.setStyleSheet(
+            "background-color: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; "
+            "border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: 600;"
+        )
+        header_row.addWidget(status_badge)
+        header_row.addStretch(1)
+
+        btn_change = QPushButton("Change Folder")
+        btn_change.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_change.setStyleSheet("padding: 4px 12px; font-size: 12px;")
+        btn_change.clicked.connect(self.browse_requested.emit)
+        header_row.addWidget(btn_change)
+        selected_layout.addLayout(header_row)
+
+        info_row = QHBoxLayout()
+        info_row.setSpacing(12)
+
+        folder_icon = QLabel("📁")
+        folder_icon.setStyleSheet("font-size: 28px;")
+        info_row.addWidget(folder_icon)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(2)
+
+        self._lbl_folder_name = QLabel("")
+        self._lbl_folder_name.setStyleSheet("font-size: 15px; font-weight: 700; color: #0f172a;")
+        self._lbl_folder_path = QLabel("")
+        self._lbl_folder_path.setStyleSheet("font-size: 12px; color: #64748b;")
+        text_col.addWidget(self._lbl_folder_name)
+        text_col.addWidget(self._lbl_folder_path)
+        info_row.addLayout(text_col, stretch=1)
+        selected_layout.addLayout(info_row)
+
+        self._lbl_scan_status = QLabel("")
+        self._lbl_scan_status.setStyleSheet("font-size: 12px; font-weight: 500;")
+        selected_layout.addWidget(self._lbl_scan_status)
+
+        self._layout.addWidget(self._selected_container)
+        self._selected_container.setVisible(False)
+
+    def set_folder(self, folder_path: Path | None, video_count: int | None = None) -> None:
+        if folder_path is None or not folder_path.exists():
+            self._empty_container.setVisible(True)
+            self._selected_container.setVisible(False)
+            self.setProperty("hasFolder", False)
+            self.style().unpolish(self)
+            self.style().polish(self)
+            return
+
+        self._empty_container.setVisible(False)
+        self._selected_container.setVisible(True)
+        self.setProperty("hasFolder", True)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+        self._lbl_folder_name.setText(folder_path.name)
+        self._lbl_folder_path.setText(str(folder_path))
+        self._lbl_folder_path.setToolTip(str(folder_path))
+
+        if video_count is not None:
+            if video_count > 0:
+                self._lbl_scan_status.setText(
+                    f"✓ {video_count} video file(s) found ready for indexing"
+                )
+                self._lbl_scan_status.setStyleSheet(
+                    "color: #16a34a; font-size: 12px; font-weight: 500;"
+                )
+            else:
+                self._lbl_scan_status.setText(
+                    "No supported video files found (.mp4, .mkv, .mov, .webm, .avi)"
+                )
+                self._lbl_scan_status.setStyleSheet(
+                    "color: #dc2626; font-size: 12px; font-weight: 500;"
+                )
+        else:
+            self._lbl_scan_status.setText("Folder ready")
+            self._lbl_scan_status.setStyleSheet(
+                "color: #64748b; font-size: 12px; font-weight: 500;"
+            )
+
+    @override
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.isLocalFile():
+                    event.acceptProposedAction()
+                    self.setProperty("dragOver", True)
+                    self.style().unpolish(self)
+                    self.style().polish(self)
+                    return
+        event.ignore()
+
+    @override
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
+        self.setProperty("dragOver", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        event.accept()
+
+    @override
+    def dropEvent(self, event: QDropEvent) -> None:
+        self.setProperty("dragOver", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+        for url in event.mimeData().urls():
+            if url.isLocalFile():
+                p = Path(url.toLocalFile())
+                target = p if p.is_dir() else p.parent
+                if target.is_dir():
+                    event.acceptProposedAction()
+                    self.folder_dropped.emit(target)
+                    return
+        event.ignore()
+
+    @override
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            child = self.childAt(event.pos())
+            if isinstance(child, QPushButton):
+                super().mousePressEvent(event)
+                return
+            self.browse_requested.emit()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
 
 
 class ProjectWizardScreen(QWidget):
@@ -95,49 +307,120 @@ class ProjectWizardScreen(QWidget):
         self._update_stepper(0)
 
     # -------------------------------------------------------------------------
+    # -------------------------------------------------------------------------
     # Stepper Indicator
     # -------------------------------------------------------------------------
     def _build_stepper(self) -> QWidget:
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 8)
+        container = QWidget()
+        container.setObjectName("stepperContainer")
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 16)
         layout.setSpacing(12)
 
+        steps_data = [
+            ("STEP 1", "Media Folder", "Source directory"),
+            ("STEP 2", "Review Episodes", "Filter video files"),
+            ("STEP 3", "Localization Setup", "Target language & mode"),
+        ]
+
+        self._step_elements: list[tuple[QLabel, QLabel, QLabel, QFrame]] = []
+        self._step_connectors: list[QFrame] = []
         self._step_labels: list[QLabel] = []
-        steps = ["1. Media Folder", "2. Episodes Review", "3. Localization Setup"]
 
-        for i, title in enumerate(steps):
-            lbl = QLabel(title)
-            lbl.setStyleSheet(
-                "font-size: 13px; font-weight: 600; color: #64748b; padding: 4px 8px;"
-            )
-            self._step_labels.append(lbl)
-            layout.addWidget(lbl)
+        for i, (tag_text, title_text, _) in enumerate(steps_data):
+            item_frame = QFrame()
+            item_frame.setStyleSheet("background: transparent; border: none;")
+            item_layout = QHBoxLayout(item_frame)
+            item_layout.setContentsMargins(0, 0, 0, 0)
+            item_layout.setSpacing(10)
 
-            if i < len(steps) - 1:
-                divider = QLabel("───")
-                divider.setStyleSheet("color: #334155; font-size: 12px;")
-                layout.addWidget(divider)
+            # Circular badge
+            badge = QLabel(str(i + 1))
+            badge.setFixedSize(28, 28)
+            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            item_layout.addWidget(badge)
 
-        layout.addStretch(1)
-        return widget
+            # Text labels
+            text_box = QVBoxLayout()
+            text_box.setSpacing(1)
+            text_box.setContentsMargins(0, 0, 0, 0)
+
+            tag_lbl = QLabel(tag_text)
+            title_lbl = QLabel(title_text)
+
+            text_box.addWidget(tag_lbl)
+            text_box.addWidget(title_lbl)
+            item_layout.addLayout(text_box)
+
+            # Click handler to navigate back to completed steps
+            def _make_handler(idx: int):
+                def _on_click(event: QMouseEvent) -> None:
+                    if idx < self._step_stack.currentIndex():
+                        self._update_stepper(idx)
+                    event.accept()
+
+                return _on_click
+
+            item_frame.mousePressEvent = _make_handler(i)
+
+            self._step_elements.append((badge, tag_lbl, title_lbl, item_frame))
+            self._step_labels.append(title_lbl)
+            layout.addWidget(item_frame)
+
+            # Connector line between steps
+            if i < len(steps_data) - 1:
+                connector = QFrame()
+                connector.setFixedHeight(2)
+                connector.setStyleSheet("background-color: #e2e8f0; border: none;")
+                self._step_connectors.append(connector)
+                layout.addWidget(connector, stretch=1)
+
+        return container
 
     def _update_stepper(self, active_index: int) -> None:
         self._step_stack.setCurrentIndex(active_index)
-        for i, lbl in enumerate(self._step_labels):
-            if i == active_index:
-                lbl.setStyleSheet(
-                    "font-size: 13px; font-weight: 700; color: #3b82f6; "
-                    "border-bottom: 2px solid #3b82f6; padding: 4px 8px;"
+
+        for i, (badge, tag, title, item_frame) in enumerate(self._step_elements):
+            if i < active_index:
+                # Completed step
+                badge.setText("✓")
+                badge.setStyleSheet(
+                    "background-color: #f0fdf4; color: #16a34a; border: 1.5px solid #16a34a; "
+                    "border-radius: 14px; font-weight: 700; font-size: 13px;"
                 )
-            elif i < active_index:
-                lbl.setStyleSheet(
-                    "font-size: 13px; font-weight: 600; color: #10b981; padding: 4px 8px;"
+                tag.setStyleSheet("color: #16a34a; font-weight: 700; font-size: 10px;")
+                title.setStyleSheet("color: #0f172a; font-weight: 600; font-size: 13px;")
+                item_frame.setCursor(Qt.CursorShape.PointingHandCursor)
+                item_frame.setToolTip(f"Click to return to Step {i + 1}")
+            elif i == active_index:
+                # Active step
+                badge.setText(str(i + 1))
+                badge.setStyleSheet(
+                    "background-color: #2563eb; color: #ffffff; border: 1.5px solid #2563eb; "
+                    "border-radius: 14px; font-weight: 700; font-size: 12px;"
                 )
+                tag.setStyleSheet("color: #2563eb; font-weight: 700; font-size: 10px;")
+                title.setStyleSheet("color: #0f172a; font-weight: 700; font-size: 13px;")
+                item_frame.setCursor(Qt.CursorShape.ArrowCursor)
+                item_frame.setToolTip("")
             else:
-                lbl.setStyleSheet(
-                    "font-size: 13px; font-weight: 500; color: #64748b; padding: 4px 8px;"
+                # Inactive / Upcoming step
+                badge.setText(str(i + 1))
+                badge.setStyleSheet(
+                    "background-color: #f8fafc; color: #94a3b8; border: 1.5px solid #cbd5e1; "
+                    "border-radius: 14px; font-weight: 600; font-size: 12px;"
                 )
+                tag.setStyleSheet("color: #94a3b8; font-weight: 600; font-size: 10px;")
+                title.setStyleSheet("color: #94a3b8; font-weight: 500; font-size: 13px;")
+                item_frame.setCursor(Qt.CursorShape.ArrowCursor)
+                item_frame.setToolTip("")
+
+        # Update connector lines
+        for i, connector in enumerate(self._step_connectors):
+            if i < active_index:
+                connector.setStyleSheet("background-color: #16a34a; border: none;")
+            else:
+                connector.setStyleSheet("background-color: #e2e8f0; border: none;")
 
     # -------------------------------------------------------------------------
     # Step 1: Media Ingestion & Project Setup
@@ -148,7 +431,7 @@ class ProjectWizardScreen(QWidget):
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(14)
 
-        # Scrollable form content for small laptop screens & accessibility
+        # Scrollable form content for responsive screen heights
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.Shape.NoFrame)
@@ -159,27 +442,47 @@ class ProjectWizardScreen(QWidget):
         content_widget = QWidget()
         layout = QVBoxLayout(content_widget)
         layout.setContentsMargins(0, 0, 8, 0)
-        layout.setSpacing(14)
+        layout.setSpacing(16)
 
+        heading_box = QVBoxLayout()
+        heading_box.setSpacing(4)
         title = QLabel("Select Media Folder")
         title.setObjectName("sectionTitle")
-        subtitle = QLabel("Choose the directory containing your drama or movie video files.")
-        subtitle.setStyleSheet("color: #94a3b8; font-size: 13px;")
-        layout.addWidget(title)
-        layout.addWidget(subtitle)
-        layout.addSpacing(8)
+        subtitle = QLabel(
+            "Choose or drop the folder containing your drama or movie video files to localize."
+        )
+        subtitle.setStyleSheet("color: #64748b; font-size: 13px;")
+        heading_box.addWidget(title)
+        heading_box.addWidget(subtitle)
+        layout.addLayout(heading_box)
 
-        # Source Folder Picker
-        folder_lbl = QLabel("Media Folder")
-        folder_lbl.setStyleSheet("font-weight: 600; font-size: 13px;")
-        layout.addWidget(folder_lbl)
+        # 1. Modern Interactive Drop Zone
+        self._dropzone = MediaFolderDropZone()
+        self._dropzone.browse_requested.connect(self._on_browse_folder)
+        self._dropzone.folder_dropped.connect(self._set_folder_path)
+        layout.addWidget(self._dropzone)
+
+        # Inline folder error label directly under drop zone
+        self._err_folder = QLabel("")
+        self._err_folder.setStyleSheet("color: #dc2626; font-size: 12px; margin-top: 2px;")
+        self._err_folder.setVisible(False)
+        layout.addWidget(self._err_folder)
+
+        # 2. Selected Folder Path Bar (Compact manual inspection / browse)
+        folder_box = QVBoxLayout()
+        folder_box.setSpacing(6)
+        folder_lbl = QLabel("Selected Folder Path")
+        folder_lbl.setStyleSheet("font-weight: 600; font-size: 13px; color: #0f172a;")
+        folder_box.addWidget(folder_lbl)
 
         folder_row = QHBoxLayout()
+        folder_row.setSpacing(8)
         self._txt_folder = QLineEdit()
         self._txt_folder.setPlaceholderText(
-            "Select folder containing video files (.mp4, .mkv, .mov, .webm)"
+            "Select folder containing video files (.mp4, .mkv, .mov, .webm, .avi)"
         )
         self._txt_folder.setReadOnly(True)
+        self._txt_folder.textChanged.connect(self._on_folder_text_changed)
 
         btn_browse = QPushButton("Browse...")
         btn_browse.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -187,29 +490,32 @@ class ProjectWizardScreen(QWidget):
 
         folder_row.addWidget(self._txt_folder, stretch=1)
         folder_row.addWidget(btn_browse)
-        layout.addLayout(folder_row)
+        folder_box.addLayout(folder_row)
+        layout.addLayout(folder_box)
 
-        self._err_folder = QLabel("")
-        self._err_folder.setStyleSheet("color: #ef4444; font-size: 12px; margin-top: 2px;")
-        self._err_folder.setVisible(False)
-        layout.addWidget(self._err_folder)
-
-        layout.addSpacing(12)
-
-        # Project Name
+        # 3. Project Name Field
+        name_box = QVBoxLayout()
+        name_box.setSpacing(6)
         name_lbl = QLabel("Project Title")
-        name_lbl.setStyleSheet("font-weight: 600; font-size: 13px;")
-        layout.addWidget(name_lbl)
+        name_lbl.setStyleSheet("font-weight: 600; font-size: 13px; color: #0f172a;")
+        name_box.addWidget(name_lbl)
 
         self._txt_name = QLineEdit()
         self._txt_name.setPlaceholderText("Enter series or drama title")
         self._txt_name.textChanged.connect(self._clear_name_error)
-        layout.addWidget(self._txt_name)
+        name_box.addWidget(self._txt_name)
+
+        name_hint = QLabel(
+            "Identifies this project in the workspace and names generated subtitle and audio files."
+        )
+        name_hint.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        name_box.addWidget(name_hint)
 
         self._err_name = QLabel("")
-        self._err_name.setStyleSheet("color: #ef4444; font-size: 12px; margin-top: 2px;")
+        self._err_name.setStyleSheet("color: #dc2626; font-size: 12px; margin-top: 2px;")
         self._err_name.setVisible(False)
-        layout.addWidget(self._err_name)
+        name_box.addWidget(self._err_name)
+        layout.addLayout(name_box)
 
         layout.addStretch(1)
 
@@ -234,6 +540,18 @@ class ProjectWizardScreen(QWidget):
 
         return page
 
+    def _set_folder_path(self, folder_path: Path) -> None:
+        self._source_dir = folder_path
+        self._txt_folder.setText(str(folder_path))
+        self._clear_folder_error()
+
+        # Auto-populate project name if empty
+        if not self._txt_name.text().strip():
+            self._txt_name.setText(folder_path.name.replace("_", " ").title())
+            self._clear_name_error()
+
+        self._update_folder_preview(folder_path)
+
     def _on_browse_folder(self) -> None:
         selected_dir = QFileDialog.getExistingDirectory(
             self,
@@ -243,18 +561,39 @@ class ProjectWizardScreen(QWidget):
         if not selected_dir:
             return
 
-        folder_path = Path(selected_dir)
-        self._txt_folder.setText(str(folder_path))
-        self._source_dir = folder_path
+        self._set_folder_path(Path(selected_dir))
 
-        # Clear inline folder error
+    def _on_folder_text_changed(self, text: str) -> None:
+        cleaned = text.strip()
+        if cleaned:
+            p = Path(cleaned)
+            self._source_dir = p
+            self._update_folder_preview(p)
+        else:
+            self._source_dir = None
+            self._update_folder_preview(None)
+
+    def _update_folder_preview(self, folder_path: Path | None) -> None:
+        if not folder_path or not folder_path.exists():
+            if hasattr(self, "_dropzone"):
+                self._dropzone.set_folder(None)
+            return
+
+        try:
+            count = sum(
+                1
+                for f in folder_path.iterdir()
+                if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS
+            )
+        except Exception:
+            count = None
+
+        if hasattr(self, "_dropzone"):
+            self._dropzone.set_folder(folder_path, video_count=count)
+
+    def _clear_folder_error(self) -> None:
         self._err_folder.setVisible(False)
         self._txt_folder.setStyleSheet("")
-
-        # Auto-populate project name if empty
-        if not self._txt_name.text().strip():
-            self._txt_name.setText(folder_path.name.replace("_", " ").title())
-            self._clear_name_error()
 
     def _clear_name_error(self) -> None:
         self._err_name.setVisible(False)
@@ -266,14 +605,14 @@ class ProjectWizardScreen(QWidget):
         if not name:
             self._err_name.setText("Project title is required.")
             self._err_name.setVisible(True)
-            self._txt_name.setStyleSheet("border: 1px solid #ef4444;")
+            self._txt_name.setStyleSheet("border: 1px solid #dc2626;")
             return
 
         # Validate Folder
         if not self._source_dir or not self._source_dir.exists():
             self._err_folder.setText("Please select a valid media folder.")
             self._err_folder.setVisible(True)
-            self._txt_folder.setStyleSheet("border: 1px solid #ef4444;")
+            self._txt_folder.setStyleSheet("border: 1px solid #dc2626;")
             return
 
         # Detect episodes
@@ -283,7 +622,7 @@ class ProjectWizardScreen(QWidget):
             logger.exception("Failed to scan directory for episodes: {}", exc)
             self._err_folder.setText(f"Unable to read folder: {exc}")
             self._err_folder.setVisible(True)
-            self._txt_folder.setStyleSheet("border: 1px solid #ef4444;")
+            self._txt_folder.setStyleSheet("border: 1px solid #dc2626;")
             return
 
         if not detected:
@@ -291,7 +630,7 @@ class ProjectWizardScreen(QWidget):
                 "No supported video files found (.mp4, .mkv, .mov, .webm, .avi)."
             )
             self._err_folder.setVisible(True)
-            self._txt_folder.setStyleSheet("border: 1px solid #ef4444;")
+            self._txt_folder.setStyleSheet("border: 1px solid #dc2626;")
             return
 
         self._detected_episodes = detected
@@ -349,6 +688,8 @@ class ProjectWizardScreen(QWidget):
         )
         self._table_episodes.setColumnWidth(0, 65)
         self._table_episodes.verticalHeader().setVisible(False)
+        self._table_episodes.setWordWrap(True)
+        self._table_episodes.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self._table_episodes.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table_episodes.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table_episodes.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
@@ -403,6 +744,7 @@ class ProjectWizardScreen(QWidget):
 
             # Filename
             file_item = QTableWidgetItem(path.name)
+            file_item.setToolTip(str(path))
             file_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
             self._table_episodes.setItem(row, 2, file_item)
 
@@ -412,6 +754,8 @@ class ProjectWizardScreen(QWidget):
             size_item = QTableWidgetItem(size_str)
             size_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight)
             self._table_episodes.setItem(row, 3, size_item)
+
+        self._table_episodes.resizeRowsToContents()
 
     def _set_all_episodes_checked(self, checked: bool) -> None:
         state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
@@ -674,4 +1018,5 @@ class ProjectWizardScreen(QWidget):
             self._rb_dubbing.setChecked(True)
         else:
             self._rb_both.setChecked(True)
+        self._update_folder_preview(None)
         self._update_stepper(0)

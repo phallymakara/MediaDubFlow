@@ -18,12 +18,16 @@ from typing import TYPE_CHECKING
 from loguru import logger
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QProgressBar,
     QPushButton,
+    QScrollArea,
+    QSlider,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -84,6 +88,10 @@ class WorkspaceScreen(QWidget):
         header_widget = self._build_header_controls()
         main_layout.addWidget(header_widget)
 
+        # 1b. Audio & Dubbing Controls Bar (Mute Original Voice, Sound Volume, Speed Slider)
+        audio_bar = self._build_audio_controls_bar()
+        main_layout.addWidget(audio_bar)
+
         # 2. KPI Summary Bar & Overall Progress
         kpi_widget = self._build_kpi_progress_bar()
         main_layout.addWidget(kpi_widget)
@@ -105,14 +113,17 @@ class WorkspaceScreen(QWidget):
         self._table.setColumnWidth(4, 110)
         self._table.verticalHeader().setVisible(False)
         self._table.verticalHeader().setDefaultSectionSize(52)
+        self._table.setWordWrap(True)
+        self._table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
         self._table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
         self._table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._table.verticalScrollBar().setSingleStep(16)
         self._table.cellDoubleClicked.connect(self._on_table_row_double_clicked)
+        self._table.cellClicked.connect(self._on_table_cell_clicked)
+        self._table.itemSelectionChanged.connect(self._on_table_selection_changed)
         main_layout.addWidget(self._table, stretch=1)
 
         # 4. Activity Log Ticker Footer
@@ -137,8 +148,10 @@ class WorkspaceScreen(QWidget):
         title_box = QVBoxLayout()
         title_box.setSpacing(2)
         self._lbl_project_title = QLabel("No Project Loaded")
+        self._lbl_project_title.setWordWrap(True)
         self._lbl_project_title.setStyleSheet("font-size: 18px; font-weight: 700; color: #0f172a;")
         self._lbl_project_meta = QLabel("")
+        self._lbl_project_meta.setWordWrap(True)
         self._lbl_project_meta.setStyleSheet("font-size: 12px; color: #64748b;")
         title_box.addWidget(self._lbl_project_title)
         title_box.addWidget(self._lbl_project_meta)
@@ -178,10 +191,223 @@ class WorkspaceScreen(QWidget):
         self._btn_pause_all.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_pause_all.clicked.connect(self._on_pause_all_clicked)
 
+        self._btn_edit_speech = QPushButton("Edit Speech")
+        self._btn_edit_speech.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_edit_speech.setEnabled(False)
+        self._btn_edit_speech.clicked.connect(self._on_edit_speech_clicked)
+
+        self._btn_redub_selected = QPushButton("Re-dub Selected")
+        self._btn_redub_selected.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_redub_selected.setEnabled(False)
+        self._btn_redub_selected.setToolTip("Re-synthesize dialogue at active speech speed and re-render the dubbed video")
+        self._btn_redub_selected.clicked.connect(self._on_redub_selected_clicked)
+
         layout.addWidget(self._btn_start_all)
         layout.addWidget(self._btn_pause_all)
+        layout.addWidget(self._btn_edit_speech)
+        layout.addWidget(self._btn_redub_selected)
 
         return widget
+
+    def _build_audio_controls_bar(self) -> QWidget:
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setFixedHeight(56)
+
+        widget = QWidget()
+        widget.setStyleSheet(
+            "background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 4px; padding: 4px 12px;"
+        )
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(10, 4, 10, 4)
+        layout.setSpacing(12)
+
+        # 1. Mute Original Speaker Toggle
+        self._chk_mute_original = QCheckBox("Mute Original Voice")
+        self._chk_mute_original.setChecked(settings.mute_original_speaker)
+        self._chk_mute_original.setStyleSheet("font-weight: 600; font-size: 12px; color: #0f172a;")
+        self._chk_mute_original.toggled.connect(self._on_mute_original_toggled)
+        layout.addWidget(self._chk_mute_original)
+
+        layout.addSpacing(4)
+
+        # 2. Sound Volume Control (Decrease, Horizontal Slider, Increase, Readout)
+        vol_box = QHBoxLayout()
+        vol_box.setSpacing(6)
+        lbl_vol = QLabel("TTS Sound:")
+        lbl_vol.setStyleSheet("font-weight: 600; font-size: 12px; color: #475569;")
+
+        self._btn_vol_down = QPushButton("-")
+        self._btn_vol_down.setFixedSize(24, 24)
+        self._btn_vol_down.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_vol_down.setToolTip("Decrease sound volume")
+        self._btn_vol_down.clicked.connect(self._on_volume_decrease)
+
+        self._slider_volume = QSlider(Qt.Orientation.Horizontal)
+        self._slider_volume.setRange(0, 200)
+        self._slider_volume.setSingleStep(5)
+        self._slider_volume.setPageStep(10)
+        self._slider_volume.setValue(int(settings.tts_volume * 100))
+        self._slider_volume.setFixedWidth(110)
+        self._slider_volume.setToolTip("Horizontal scroll or drag to adjust sound volume")
+        self._slider_volume.valueChanged.connect(self._on_volume_slider_changed)
+
+        self._btn_vol_up = QPushButton("+")
+        self._btn_vol_up.setFixedSize(24, 24)
+        self._btn_vol_up.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_vol_up.setToolTip("Increase sound volume")
+        self._btn_vol_up.clicked.connect(self._on_volume_increase)
+
+        self._lbl_vol_val = QLabel(f"{int(settings.tts_volume * 100)}%")
+        self._lbl_vol_val.setFixedWidth(42)
+        self._lbl_vol_val.setStyleSheet("font-size: 12px; font-weight: 600; color: #2563eb;")
+
+        vol_box.addWidget(lbl_vol)
+        vol_box.addWidget(self._btn_vol_down)
+        vol_box.addWidget(self._slider_volume)
+        vol_box.addWidget(self._btn_vol_up)
+        vol_box.addWidget(self._lbl_vol_val)
+        layout.addLayout(vol_box)
+
+        layout.addSpacing(4)
+
+        # 3. Background Audio Volume Control
+        bg_vol_box = QHBoxLayout()
+        bg_vol_box.setSpacing(6)
+        lbl_bg_vol = QLabel("Background Sound:")
+        lbl_bg_vol.setStyleSheet("font-weight: 600; font-size: 12px; color: #475569;")
+
+        self._btn_bg_vol_down = QPushButton("-")
+        self._btn_bg_vol_down.setFixedSize(24, 24)
+        self._btn_bg_vol_down.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_bg_vol_down.setToolTip("Decrease background sound volume")
+        self._btn_bg_vol_down.clicked.connect(self._on_bg_vol_decrease)
+
+        self._slider_bg_volume = QSlider(Qt.Orientation.Horizontal)
+        self._slider_bg_volume.setRange(0, 150)
+        self._slider_bg_volume.setSingleStep(5)
+        self._slider_bg_volume.setPageStep(10)
+        self._slider_bg_volume.setValue(int(settings.original_audio_volume * 100))
+        self._slider_bg_volume.setFixedWidth(100)
+        self._slider_bg_volume.setToolTip("Horizontal scroll or drag to adjust background audio volume")
+        self._slider_bg_volume.valueChanged.connect(self._on_bg_vol_slider_changed)
+
+        self._btn_bg_vol_up = QPushButton("+")
+        self._btn_bg_vol_up.setFixedSize(24, 24)
+        self._btn_bg_vol_up.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_bg_vol_up.setToolTip("Increase background sound volume")
+        self._btn_bg_vol_up.clicked.connect(self._on_bg_vol_increase)
+
+        self._lbl_bg_vol_val = QLabel(f"{int(settings.original_audio_volume * 100)}%")
+        self._lbl_bg_vol_val.setFixedWidth(40)
+        self._lbl_bg_vol_val.setStyleSheet("font-size: 12px; font-weight: 600; color: #2563eb;")
+
+        bg_vol_box.addWidget(lbl_bg_vol)
+        bg_vol_box.addWidget(self._btn_bg_vol_down)
+        bg_vol_box.addWidget(self._slider_bg_volume)
+        bg_vol_box.addWidget(self._btn_bg_vol_up)
+        bg_vol_box.addWidget(self._lbl_bg_vol_val)
+        layout.addLayout(bg_vol_box)
+
+        layout.addSpacing(4)
+
+        # 3. Horizontal Scroll Speed Control (0.50x to 2.00x)
+        speed_box = QHBoxLayout()
+        speed_box.setSpacing(6)
+        lbl_speed = QLabel("Speech Speed:")
+        lbl_speed.setStyleSheet("font-weight: 600; font-size: 12px; color: #475569;")
+
+        self._btn_speed_down = QPushButton("-")
+        self._btn_speed_down.setFixedSize(24, 24)
+        self._btn_speed_down.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_speed_down.setToolTip("Decrease speech speed")
+        self._btn_speed_down.clicked.connect(self._on_speed_decrease)
+
+        self._slider_speed = QSlider(Qt.Orientation.Horizontal)
+        self._slider_speed.setRange(50, 200)
+        self._slider_speed.setSingleStep(5)
+        self._slider_speed.setPageStep(10)
+        self._slider_speed.setValue(int(settings.tts_speed * 100))
+        self._slider_speed.setFixedWidth(120)
+        self._slider_speed.setToolTip("Horizontal scroll or drag to adjust speech speed (0.50x to 2.00x)")
+        self._slider_speed.valueChanged.connect(self._on_speed_slider_changed)
+
+        self._btn_speed_up = QPushButton("+")
+        self._btn_speed_up.setFixedSize(24, 24)
+        self._btn_speed_up.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_speed_up.setToolTip("Increase speech speed")
+        self._btn_speed_up.clicked.connect(self._on_speed_increase)
+
+        self._lbl_speed_val = QLabel(f"{settings.tts_speed:.2f}x")
+        self._lbl_speed_val.setFixedWidth(44)
+        self._lbl_speed_val.setStyleSheet("font-size: 12px; font-weight: 600; color: #2563eb;")
+
+        self._btn_reset_speed = QPushButton("1.5x")
+        self._btn_reset_speed.setFixedHeight(24)
+        self._btn_reset_speed.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_reset_speed.setToolTip("Reset to default 1.50x speed")
+        self._btn_reset_speed.clicked.connect(lambda: self._slider_speed.setValue(150))
+
+        speed_box.addWidget(lbl_speed)
+        speed_box.addWidget(self._btn_speed_down)
+        speed_box.addWidget(self._slider_speed)
+        speed_box.addWidget(self._btn_speed_up)
+        speed_box.addWidget(self._lbl_speed_val)
+        speed_box.addWidget(self._btn_reset_speed)
+        layout.addLayout(speed_box)
+
+        layout.addStretch(1)
+
+        scroll_area.setWidget(widget)
+        return scroll_area
+
+    def _on_mute_original_toggled(self, checked: bool) -> None:
+        settings.mute_original_speaker = checked
+        self._log_activity(
+            "Original voice muted in dubbing." if checked else "Original voice blended into background."
+        )
+
+    def _on_volume_slider_changed(self, value: int) -> None:
+        factor = round(value / 100.0, 2)
+        settings.tts_volume = factor
+        self._lbl_vol_val.setText(f"{value}%")
+
+    def _on_volume_decrease(self) -> None:
+        new_val = max(0, self._slider_volume.value() - 10)
+        self._slider_volume.setValue(new_val)
+
+    def _on_volume_increase(self) -> None:
+        new_val = min(200, self._slider_volume.value() + 10)
+        self._slider_volume.setValue(new_val)
+
+    def _on_bg_vol_slider_changed(self, value: int) -> None:
+        factor = round(value / 100.0, 2)
+        settings.original_audio_volume = factor
+        self._lbl_bg_vol_val.setText(f"{value}%")
+
+    def _on_bg_vol_decrease(self) -> None:
+        new_val = max(0, self._slider_bg_volume.value() - 10)
+        self._slider_bg_volume.setValue(new_val)
+
+    def _on_bg_vol_increase(self) -> None:
+        new_val = min(150, self._slider_bg_volume.value() + 10)
+        self._slider_bg_volume.setValue(new_val)
+
+    def _on_speed_slider_changed(self, value: int) -> None:
+        speed = round(value / 100.0, 2)
+        settings.tts_speed = speed
+        self._lbl_speed_val.setText(f"{speed:.2f}x")
+
+    def _on_speed_decrease(self) -> None:
+        new_val = max(50, self._slider_speed.value() - 5)
+        self._slider_speed.setValue(new_val)
+
+    def _on_speed_increase(self) -> None:
+        new_val = min(200, self._slider_speed.value() + 5)
+        self._slider_speed.setValue(new_val)
 
     def _build_kpi_progress_bar(self) -> QWidget:
         widget = QWidget()
@@ -299,6 +525,7 @@ class WorkspaceScreen(QWidget):
                 Path(ep.source_file).name if ep.source_file else f"Episode {ep.episode_number}"
             )
             file_item = QTableWidgetItem(filename)
+            file_item.setToolTip(ep.source_file or filename)
             file_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
             self._table.setItem(row, 1, file_item)
 
@@ -383,6 +610,10 @@ class WorkspaceScreen(QWidget):
             btn.setText("Review")
             btn.setStyleSheet("")
             btn.clicked.connect(lambda _, ep_id=ep.id: self.episode_selected.emit(ep_id))
+        elif ep.translation_path or ep.status == EpisodeStatus.REVIEW:
+            btn.setText("Edit Speech")
+            btn.setStyleSheet("")
+            btn.clicked.connect(lambda _, ep_id=ep.id: self.episode_selected.emit(ep_id))
         elif ep.status == EpisodeStatus.FAILED:
             btn.setText("Retry")
             btn.setStyleSheet("color: #dc2626; font-weight: 600;")
@@ -460,7 +691,10 @@ class WorkspaceScreen(QWidget):
         if episode_id in self._row_progress_bars:
             self._row_progress_bars[episode_id].setValue(pct)
         if episode_id in self._row_stage_labels:
-            self._row_stage_labels[episode_id].setText(f"{stage_name} ({pct}%)")
+            if f"({pct}%)" in stage_name or "%" in stage_name:
+                self._row_stage_labels[episode_id].setText(stage_name)
+            else:
+                self._row_stage_labels[episode_id].setText(f"{stage_name} ({pct}%)")
 
         self._recalculate_kpis()
         self._log_activity(f"EP #{episode_id}: {stage_name} at {pct}%")
@@ -569,6 +803,71 @@ class WorkspaceScreen(QWidget):
             f"{total} Total  |  {done} Done  |  {in_prog} In Progress  |  {pending} Pending{fail_text}"
         )
 
+    def _on_table_cell_clicked(self, row: int, col: int) -> None:
+        """Handle single-click on episode table rows."""
+        if 0 <= row < len(self._episodes):
+            ep_id = self._episodes[row].id
+            self._update_selected_episode_ui(ep_id)
+            # If user clicked any content column other than Action button, open editor
+            if col != 4:
+                self.episode_selected.emit(ep_id)
+
+    def _on_table_selection_changed(self) -> None:
+        """Update header edit button when table selection changes."""
+        selected_rows = self._table.selectionModel().selectedRows()
+        if selected_rows:
+            row = selected_rows[0].row()
+            if 0 <= row < len(self._episodes):
+                ep_id = self._episodes[row].id
+                self._update_selected_episode_ui(ep_id)
+                return
+        self._btn_edit_speech.setEnabled(False)
+        self._btn_edit_speech.setText("Edit Speech")
+        self._btn_redub_selected.setEnabled(False)
+        self._btn_redub_selected.setText("Re-dub Selected")
+
+    def _update_selected_episode_ui(self, episode_id: int) -> None:
+        for ep in self._episodes:
+            if ep.id == episode_id:
+                ep_tag = f"EP {ep.episode_number:02d}" if ep.episode_number > 0 else f"#{ep.id}"
+                self._btn_edit_speech.setEnabled(True)
+                self._btn_edit_speech.setText(f"Edit Speech ({ep_tag})")
+                can_redub = bool(
+                    ep.status in (EpisodeStatus.DONE, EpisodeStatus.REVIEW)
+                    or ep.translation_path
+                )
+                self._btn_redub_selected.setEnabled(can_redub)
+                self._btn_redub_selected.setText(f"Re-dub ({ep_tag})")
+                break
+
+    def _on_redub_selected_clicked(self) -> None:
+        """Trigger rapid re-dubbing with active speech speed for currently selected episode."""
+        selected_rows = self._table.selectionModel().selectedRows()
+        if selected_rows:
+            row = selected_rows[0].row()
+            if 0 <= row < len(self._episodes):
+                ep = self._episodes[row]
+                self._job_manager.redub_episode(ep.id, settings.tts_speed)
+                if ep.id in self._row_status_labels:
+                    lbl = self._row_status_labels[ep.id]
+                    lbl.setText("Queued")
+                    self._apply_badge_style(lbl, EpisodeStatus.PENDING)
+                if ep.id in self._row_progress_bars:
+                    self._row_progress_bars[ep.id].setValue(0)
+                if ep.id in self._row_action_buttons:
+                    self._row_action_buttons[ep.id].setEnabled(False)
+                    self._row_action_buttons[ep.id].setText("Queued")
+                self._log_activity(f"Episode #{ep.id} queued to re-dub at {settings.tts_speed:.2f}x speed.")
+
+    def _on_edit_speech_clicked(self) -> None:
+        """Trigger episode inspector & editor for currently selected episode."""
+        selected_rows = self._table.selectionModel().selectedRows()
+        if selected_rows:
+            row = selected_rows[0].row()
+            if 0 <= row < len(self._episodes):
+                ep_id = self._episodes[row].id
+                self.episode_selected.emit(ep_id)
+
     def _on_table_row_double_clicked(self, row: int, _col: int) -> None:
         if 0 <= row < len(self._episodes):
             ep_id = self._episodes[row].id
@@ -576,4 +875,6 @@ class WorkspaceScreen(QWidget):
 
     def _log_activity(self, message: str) -> None:
         now_str = datetime.now().strftime("%H:%M:%S")
-        self._lbl_activity_ticker.setText(f"[{now_str}] {message}")
+        full_msg = f"[{now_str}] {message}"
+        self._lbl_activity_ticker.setText(full_msg)
+        self._lbl_activity_ticker.setToolTip(full_msg)

@@ -123,6 +123,28 @@ class Settings(BaseSettings):
         default="tts_models/km/fairseq/vits",
         description="Coqui TTS model identifier for Khmer",
     )
+    tts_speed: float = Field(
+        default=1.5,
+        ge=0.5,
+        le=2.0,
+        description="Speech rate speed factor for Khmer TTS (0.5x to 2.0x)",
+    )
+    tts_volume: float = Field(
+        default=1.2,
+        ge=0.0,
+        le=2.5,
+        description="Volume factor for Khmer TTS dialogue track (0.0 to 2.5)",
+    )
+    mute_original_speaker: bool = Field(
+        default=True,
+        description="Whether to mute the original speaker voice in the dubbed video",
+    )
+    original_audio_volume: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.5,
+        description="Volume factor for original background audio track (0.0 to 1.5)",
+    )
 
     # --- Output Mode ---
     output_mode: PipelineOutputMode = Field(

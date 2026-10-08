@@ -162,6 +162,8 @@ class HomeScreen(QWidget):
 
         self._table.verticalHeader().setVisible(False)
         self._table.verticalHeader().setDefaultSectionSize(54)
+        self._table.setWordWrap(True)
+        self._table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setVerticalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)

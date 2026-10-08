@@ -201,7 +201,7 @@ class MediaDubFlowApp(QMainWindow):
 
         def _show_panel(ep: Episode | None) -> None:
             if ep:
-                dlg = EpisodeDetailPanel(ep, self)
+                dlg = EpisodeDetailPanel(ep, self, job_manager=self._job_manager)
                 dlg.exec()
 
         self._bridge.run_async(_fetch_episode(), on_success=_show_panel)
