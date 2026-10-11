@@ -204,13 +204,13 @@ class WorkspaceScreen(QWidget):
         self._spin_combine_count.setToolTip("Specific number of videos to combine into one file (default: 3)")
         self._spin_combine_count.valueChanged.connect(self._on_combine_count_changed)
 
-        self._btn_combine_batch = QPushButton("+ Combine 3 in 1")
+        self._btn_combine_batch = QPushButton("Combine 3 in 1")
         self._btn_combine_batch.setFixedHeight(30)
         self._btn_combine_batch.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_combine_batch.setToolTip("Combine episodes in batches (default: 3 in 1) into merged video files")
         self._btn_combine_batch.clicked.connect(self._on_combine_batch_clicked)
 
-        self._btn_combine_all = QPushButton("+ Combine All in 1")
+        self._btn_combine_all = QPushButton("Combine All in 1")
         self._btn_combine_all.setFixedHeight(30)
         self._btn_combine_all.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_combine_all.setToolTip("Combine all episodes in the project into a single full video file")
@@ -769,7 +769,7 @@ class WorkspaceScreen(QWidget):
 
     def _on_combine_count_changed(self, value: int) -> None:
         """Update batch combination button label when number of combination changes."""
-        self._btn_combine_batch.setText(f"+ Combine {value} in 1")
+        self._btn_combine_batch.setText(f"Combine {value} in 1")
         self._btn_combine_batch.setToolTip(
             f"Combine episodes in batches of {value} into merged video files"
         )

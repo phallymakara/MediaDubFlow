@@ -144,9 +144,14 @@ class TTSGenerationStage(PipelineStage):
 
                 chunk_wav = chunks_dir / f"chunk_{idx:04d}.wav"
                 gender = str(seg.get("gender", "")).lower()
-                voice_for_seg = seg.get("tts_voice") or (
-                    "km-KH-SreymomNeural" if gender == "female" else None
-                )
+                if settings.tts_voice == "km-KH-PisethNeural":
+                    voice_for_seg = "km-KH-PisethNeural"
+                elif settings.tts_voice == "km-KH-SreymomNeural":
+                    voice_for_seg = "km-KH-SreymomNeural"
+                else:
+                    voice_for_seg = seg.get("tts_voice") or (
+                        "km-KH-SreymomNeural" if gender == "female" else "km-KH-PisethNeural"
+                    )
                 success = await self._synthesize_chunk(text, chunk_wav, voice_override=voice_for_seg)
                 if success and chunk_wav.exists():
                     try:

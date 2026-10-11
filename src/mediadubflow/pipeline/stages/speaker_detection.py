@@ -108,6 +108,9 @@ class SpeakerDetectionStage(PipelineStage):
             else:
                 speaker_lbl, gender, voice = "SPEAKER_00", "male", "km-KH-PisethNeural"
 
+            if settings.tts_voice in ("km-KH-PisethNeural", "km-KH-SreymomNeural"):
+                voice = settings.tts_voice
+
             seg["speaker"] = speaker_lbl
             seg["gender"] = gender
             seg["tts_voice"] = voice

@@ -25,6 +25,11 @@ def test_settings_dialog_load_and_save(qtbot, monkeypatch) -> None:
     assert dlg._cmb_provider.count() == 4
     assert dlg._spin_concurrency.value() >= 1
 
+    # Verify TTS voice selection contains Only Male Voice
+    assert dlg._cmb_tts_voice.count() == 3
+    assert "Only Male Voice" in dlg._cmb_tts_voice.itemText(0)
+    assert dlg._cmb_tts_voice.itemData(0) == "km-KH-PisethNeural"
+
     # Switch values
     dlg._spin_concurrency.setValue(4)
 

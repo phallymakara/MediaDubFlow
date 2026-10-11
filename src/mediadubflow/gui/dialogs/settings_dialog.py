@@ -206,8 +206,9 @@ class SettingsDialog(QDialog):
 
         # TTS Voice Selection
         self._cmb_tts_voice = QComboBox()
-        self._cmb_tts_voice.addItem("Piseth (Male, Khmer Natural) — km-KH-PisethNeural", "km-KH-PisethNeural")
-        self._cmb_tts_voice.addItem("Sreymom (Female, Khmer Natural) — km-KH-SreymomNeural", "km-KH-SreymomNeural")
+        self._cmb_tts_voice.addItem("Only Male Voice (Piseth) — km-KH-PisethNeural", "km-KH-PisethNeural")
+        self._cmb_tts_voice.addItem("Auto Multi-Voice (Male Piseth & Female Sreymom)", "auto")
+        self._cmb_tts_voice.addItem("Only Female Voice (Sreymom) — km-KH-SreymomNeural", "km-KH-SreymomNeural")
         general_form_layout.addRow("TTS Voice:", self._cmb_tts_voice)
 
         # Sound Volume Control (0% to 200%)

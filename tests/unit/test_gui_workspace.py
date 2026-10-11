@@ -148,18 +148,18 @@ def test_workspace_combine_buttons_and_spinbox(qtbot, monkeypatch) -> None:
 
     # 1. Verify default values
     assert screen._spin_combine_count.value() == 3
-    assert screen._btn_combine_batch.text() == "+ Combine 3 in 1"
-    assert screen._btn_combine_all.text() == "+ Combine All in 1"
+    assert screen._btn_combine_batch.text() == "Combine 3 in 1"
+    assert screen._btn_combine_all.text() == "Combine All in 1"
 
     # 2. Verify changing spinbox value updates button label dynamically
     screen._spin_combine_count.setValue(5)
-    assert screen._btn_combine_batch.text() == "+ Combine 5 in 1"
+    assert screen._btn_combine_batch.text() == "Combine 5 in 1"
 
     screen._spin_combine_count.setValue(2)
-    assert screen._btn_combine_batch.text() == "+ Combine 2 in 1"
+    assert screen._btn_combine_batch.text() == "Combine 2 in 1"
 
     screen._spin_combine_count.setValue(3)
-    assert screen._btn_combine_batch.text() == "+ Combine 3 in 1"
+    assert screen._btn_combine_batch.text() == "Combine 3 in 1"
 
     # 3. Clicking without project loaded shows message box
     info_mock = MagicMock()
