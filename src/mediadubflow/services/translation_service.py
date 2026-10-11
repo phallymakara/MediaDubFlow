@@ -18,21 +18,48 @@ from loguru import logger
 
 from mediadubflow.config.settings import TranslationProvider, settings
 
-_SYSTEM_PROMPT_TEMPLATE = """You are an expert subtitle and dubbing translator specializing in natural, culturally authentic Khmer localization for dramas and movies.
+_SYSTEM_PROMPT_TEMPLATE = """You are a master dubbing director and senior dialogue scriptwriter specializing in authentic Khmer (ភាសាខ្មែរ) drama and cinema localization (រចនាប័ទ្មបញ្ចូលសំឡេងរឿងភាគ និងភាពយន្ត).
 
-Your task is to translate spoken dialogue lines from {source_language} into natural, conversational Khmer (ភាសាខ្មែរ).
+Your task is to translate spoken dialogue lines from {source_language} into vivid, natural, emotional, and captivating conversational Khmer that sounds exactly like actors speaking in real drama dubbing (ដូចតួអង្គនិយាយក្នុងការបញ្ចូលសំឡេងរឿងភាគពិតៗ).
 
-Guidelines:
-1. Translate dialogue to sound natural when spoken aloud by Khmer voice actors.
-2. Maintain character relationships, tone, politeness levels, and emotional subtext.
-3. Preserve the exact segment IDs provided in the input.
-4. Keep translations concise enough to match the original timing constraints of video dubbing.
+Core Principles for Drama Character Dubbing:
+
+1. Authentic Spoken Communication (ភាសានិយាយជាក់ស្តែង មិនរឹងស្តូក):
+   - Translate using natural, everyday spoken Khmer (ភាសានិយាយក្នុងជីវិតរស់នៅ) that rolls smoothly off the tongue when voiced aloud.
+   - Absolutely AVOID stiff, mechanical, or textbook-like literal word-by-word translations (ហាមបកប្រែពាក្យត្រង់ៗបែបសៀវភៅ ឬរឹងស្តូក).
+   - Natural spoken rhythm examples:
+     * Instead of "តើអ្នកកំពុងធ្វើអ្វីនៅទីនេះ?" -> Use "ម៉េចក៏ឯងមកនៅទីនេះ?" or "ឯងមកធ្វើអីនៅទីនេះ?"
+     * Instead of "តើមានបញ្ហាអ្វីកើតឡើង?" -> Use "មានរឿងអីកើតឡើងហ្នឹង?" or "កើតអីហ្នឹង?"
+     * Instead of "ខ្ញុំមិនអាចទ្រាំទ្របានទៀតទេ" -> Use "ខ្ញុំទ្រាំលែងបានទៀតហើយ!"
+     * Instead of "សូមមេត្តាអភ័យទោសដល់ខ្ញុំ" -> Use "សុំទោសផង!" or "កុំប្រកាន់ខ្ញុំអី!"
+     * Instead of "ហេតុអ្វីបានជាអ្នកធ្វើបែបនេះ?" -> Use "ម៉េចក៏ឯងធ្វើចឹង?" or "ហេតុអីបានជាធ្វើបែបហ្នឹង?"
+     * Instead of "ខ្ញុំស្រឡាញ់អ្នក" -> Use "បងស្រឡាញ់អូន" or "ខ្ញុំស្រឡាញ់ឯង" (based on role/gender).
+
+2. Character Roles, Pronouns & Dynamics (ការប្រើប្រាស់សព្វនាម និងឋានៈតួអង្គ):
+   - Each input line indicates character information (e.g., SPEAKER_00 (Male), SPEAKER_01 (Female)). Use this to choose authentic drama pronouns:
+     * Lovers / Couples / Husband & Wife: Use "បង" (Male) and "អូន" (Female) (e.g. "បងស្រឡាញ់អូន", "អូនកុំខឹងនឹងបងអីណា", "បងមកវិញហើយ").
+     * Boss / President & Subordinate / Secretary: Use "លោកប្រធាន" / "លោកម្ចាស់" / "អ្នកនាង" / "កញ្ញា" (e.g. "លោកប្រធាន មានរឿងអីមែនទេ?").
+     * Doctor & Patient / Staff: Use "លោកវេជ្ជបណ្ឌិត" / "អ្នកគ្រូពេទ្យ" / "លោក" / "អ្នកជំងឺ" (e.g. "លោកវេជ្ជបណ្ឌិត ស្ថានភាពគាត់យ៉ាងម៉េចហើយ?").
+     * Family & Elders: Use "លោកប៉ា", "អ្នកម៉ាក់", "កូន", "លោកពូ", "អ្នកមីង", "បងស្រី", "បងប្រុស", "ប្អូន".
+     * Close Friends / Peers: Use "ឯង", "ខ្ញុំ", "គ្នា", "ពួកយើង".
+     * Confrontation / Enemies / Anger: Use forceful spoken drama delivery (e.g. "ឯងចង់យ៉ាងម៉េច?", "កុំមកពាក់ព័ន្ធនឹងខ្ញុំ!", "ឯងគិតថាឯងជាអ្នកណា?", "ចង្រៃយក!").
+
+3. Emotional Spoken Particles & Exclamations (ពាក្យបន្ថែមបង្កើនមនោសញ្ចេតនា):
+   - Inject natural conversational particles: ណា៎, ហ្នឹង, ហ្នឹងហើយ, តើ, ម៉េច, នៀក, អីចឹង, ហ្អី, ទេតើ, ទៅ!
+   - Capture genuine emotional cries, surprise, pain, or distress: "ជួយផង!", "កុំ!", "លែងខ្ញុំ!", "អត់ទេ!", "ស្អីគេហ្នឹង?", "ពុទ្ធោអើយ!".
+
+4. Series-Wide Consistency Across All Episodes (ភាពស៊ីសង្វាក់គ្នានៃរឿងភាគទាំងមូល):
+   - Maintain uniform character names, titles, and relationship terms throughout all episodes of the series.
+   - When character names or terms are defined in the reference list, adhere to them strictly across all lines.
+
+5. Strict Schema:
+   - Preserve the exact segment IDs provided in the input.
 {glossary_section}
 
 Format Requirements:
 Output ONLY a valid JSON array of objects with the exact schema:
 [
-  {{"id": <int>, "translated_text": "<Khmer translation>"}}
+  {{"id": <int>, "translated_text": "<Khmer spoken dialogue translation>"}}
 ]
 Do not include markdown code fences or explanatory text. Output pure JSON only."""
 
@@ -222,8 +249,13 @@ async def _translate_batch_azure_openai(
 
     from openai import AsyncAzureOpenAI  # noqa: PLC0415
 
+    endpoint = settings.azure_openai_endpoint.strip().rstrip("/")
+    for suffix in ("/openai/v1", "/openai"):
+        if endpoint.endswith(suffix):
+            endpoint = endpoint[: -len(suffix)].rstrip("/")
+
     client = AsyncAzureOpenAI(
-        azure_endpoint=settings.azure_openai_endpoint.strip(),
+        azure_endpoint=endpoint,
         api_key=settings.azure_openai_api_key.strip(),
         api_version=settings.azure_openai_api_version.strip() or "2024-08-01-preview",
         timeout=60.0,
@@ -413,7 +445,15 @@ async def translate_transcript_segments(
 
     for i in range(0, len(segments), batch_size):
         chunk = segments[i : i + batch_size]
-        batch_input = [{"id": seg["id"], "text": seg.get("text", "").strip()} for seg in chunk]
+        batch_input: list[dict[str, Any]] = []
+        for seg in chunk:
+            item: dict[str, Any] = {"id": seg["id"]}
+            spk = seg.get("speaker")
+            gender = seg.get("gender")
+            if spk:
+                item["speaker"] = f"{spk} ({gender})" if gender else str(spk)
+            item["text"] = seg.get("text", "").strip()
+            batch_input.append(item)
 
         logger.info(
             "Translating batch {}/{} ({} lines) using provider={}",
@@ -450,22 +490,17 @@ async def translate_transcript_segments(
             except Exception:
                 pass
 
-    # Build final enriched segments preserving original structure
+    # Build final enriched segments preserving original structure and speaker metadata
     enriched_segments: list[dict[str, Any]] = []
     for seg in segments:
         seg_id = seg["id"]
         original = seg.get("text", "").strip()
         translated = translated_map.get(seg_id, original)
 
-        enriched_segments.append(
-            {
-                "id": seg_id,
-                "start": seg.get("start", 0.0),
-                "end": seg.get("end", 0.0),
-                "original_text": original,
-                "translated_text": translated,
-            }
-        )
+        item = dict(seg)
+        item["original_text"] = original
+        item["translated_text"] = translated
+        enriched_segments.append(item)
 
     logger.info(
         "Successfully translated {} segments into {}",
@@ -473,3 +508,105 @@ async def translate_transcript_segments(
         target_language,
     )
     return enriched_segments
+
+
+async def translate_title_to_khmer(
+    title: str,
+    *,
+    source_language: str = "",
+    episode_number: int | None = None,
+) -> str:
+    """
+    Translate drama or episode title into natural, attractive Khmer drama naming.
+    e.g. 'The Doctor's Cursed Bride - Ep 01' -> 'រឿង កូនក្រមុំអាថ៌កំបាំងរបស់វេជ្ជបណ្ឌិត - ភាគ ០១'.
+    """
+    # Strip redundant episode suffixes from title (e.g. "Ep 10", "Episode 01", "_10")
+    clean_title = re.sub(
+        r"[\s_\-]+(?:ep(?:isode)?|part|ភាគ)\s*[\d០-៩]+.*$",
+        "",
+        title.replace("_", " "),
+        flags=re.IGNORECASE,
+    ).strip()
+    if not clean_title:
+        clean_title = title.replace("_", " ").strip()
+    if not clean_title:
+        return f"ភាគ {episode_number:02d}" if episode_number else "ភាគពិសេស"
+
+    ep_hint = f" Episode {episode_number}" if episode_number else ""
+    prompt = (
+        f"You are an expert movie and TV drama localizer into Khmer (ភាសាខ្មែរ). "
+        f"Translate the following drama title into an engaging, natural Khmer drama title for audiences:\n"
+        f"'{clean_title}'{ep_hint}\n\n"
+        f"Rules:\n"
+        f"1. Make it sound like a real movie/drama title (e.g. starting with 'រឿង ' followed by the localized title).\n"
+        f"2. If episode number is {episode_number}, append ' - ភាគ {episode_number:02d}'.\n"
+        f"3. Return ONLY the translated Khmer title string. Do NOT add quotes, markdown, or explanation."
+    )
+
+    try:
+        active_provider = settings.translation_provider
+        if active_provider == TranslationProvider.OPENAI:
+            if not settings.openai_api_key.strip():
+                raise ValueError("OPENAI_API_KEY missing")
+            from openai import AsyncOpenAI  # noqa: PLC0415
+
+            client = AsyncOpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url or None, timeout=30.0)
+            res = await client.chat.completions.create(
+                model=settings.openai_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=60,
+                temperature=0.3,
+            )
+            raw = res.choices[0].message.content or ""
+        elif active_provider == TranslationProvider.AZURE_OPENAI:
+            if not settings.azure_openai_api_key.strip():
+                raise ValueError("AZURE_OPENAI_API_KEY missing")
+            from openai import AsyncAzureOpenAI  # noqa: PLC0415
+
+            endpoint = settings.azure_openai_endpoint.strip().rstrip("/")
+            for suffix in ("/openai/v1", "/openai"):
+                if endpoint.endswith(suffix):
+                    endpoint = endpoint[: -len(suffix)].rstrip("/")
+            client = AsyncAzureOpenAI(
+                azure_endpoint=endpoint,
+                api_key=settings.azure_openai_api_key.strip(),
+                api_version=settings.azure_openai_api_version.strip() or "2024-08-01-preview",
+                timeout=30.0,
+            )
+            res = await client.chat.completions.create(
+                model=settings.azure_openai_deployment_name.strip(),
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=60,
+                temperature=0.3,
+            )
+            raw = res.choices[0].message.content or ""
+        elif active_provider == TranslationProvider.GEMINI:
+            import httpx  # noqa: PLC0415
+
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_model}:generateContent?key={settings.gemini_api_key}"
+            async with httpx.AsyncClient(timeout=30.0) as http_client:
+                r = await http_client.post(url, json={"contents": [{"parts": [{"text": prompt}]}]})
+                data = r.json()
+                raw = data["candidates"][0]["content"]["parts"][0]["text"]
+        elif active_provider == TranslationProvider.ANTHROPIC:
+            from anthropic import AsyncAnthropic  # noqa: PLC0415
+
+            client = AsyncAnthropic(api_key=settings.anthropic_api_key, timeout=30.0)
+            res = await client.messages.create(
+                model=settings.anthropic_model,
+                max_tokens=60,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = res.content[0].text
+        else:
+            raw = ""
+
+        khmer_res = re.sub(r'["\n\r`*]', "", raw).strip()
+        if khmer_res:
+            return khmer_res
+    except Exception as exc:
+        logger.warning("Could not translate title '{}' to Khmer: {}", clean_title, exc)
+
+    ep_str = f" - ភាគ {episode_number:02d}" if episode_number else ""
+    prefix = "" if clean_title.startswith("រឿង") else "រឿង "
+    return f"{prefix}{clean_title}{ep_str}"

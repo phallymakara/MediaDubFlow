@@ -67,26 +67,39 @@ class AudioMixingStage(PipelineStage):
                     out_path=mixed_audio,
                 )
                 if not success:
-                    # Fallback to FFmpeg amix filter if waveform mixer encountered an issue
-                    logger.warning("[Episode {}] Falling back to FFmpeg amix", ctx.episode_id)
-                    filter_complex = (
-                        f"[0:a]volume={bg_vol:.2f}[bg];[1:a]volume={tts_vol:.2f}[vox];"
-                        "[bg][vox]amix=inputs=2:duration=first:dropout_transition=2[out]"
-                    )
-                    args = [
-                        "-y",
-                        "-i",
-                        str(ctx.extracted_audio),
-                        "-i",
-                        str(ctx.tts_audio_path),
-                        "-filter_complex",
-                        filter_complex,
-                        "-map",
-                        "[out]",
-                        "-c:a",
-                        "pcm_s16le",
-                        str(mixed_audio),
-                    ]
+                    # Fallback to FFmpeg if waveform mixer encountered an issue
+                    logger.warning("[Episode {}] Falling back to FFmpeg mixing", ctx.episode_id)
+                    if settings.mute_original_speaker:
+                        # Output clean TTS dialogue track without leaking original speech
+                        args = [
+                            "-y",
+                            "-i",
+                            str(ctx.tts_audio_path),
+                            "-filter:a",
+                            f"volume={tts_vol:.2f}",
+                            "-c:a",
+                            "pcm_s16le",
+                            str(mixed_audio),
+                        ]
+                    else:
+                        filter_complex = (
+                            f"[0:a]volume={bg_vol:.2f}[bg];[1:a]volume={tts_vol:.2f}[vox];"
+                            "[bg][vox]amix=inputs=2:duration=first:dropout_transition=2[out]"
+                        )
+                        args = [
+                            "-y",
+                            "-i",
+                            str(ctx.extracted_audio),
+                            "-i",
+                            str(ctx.tts_audio_path),
+                            "-filter_complex",
+                            filter_complex,
+                            "-map",
+                            "[out]",
+                            "-c:a",
+                            "pcm_s16le",
+                            str(mixed_audio),
+                        ]
                     code, _, stderr = await run_ffmpeg(args)
                     if code != 0:
                         msg = f"Audio mixing fallback failed: {stderr[:200]}"
@@ -218,12 +231,10 @@ class AudioMixingStage(PipelineStage):
             elif tts_ch > 1 and bg_ch == 1:
                 tts_samples = np.mean(tts_samples, axis=1)
 
-            # 4. Build muting/ducking time intervals with pre-roll and post-roll safety margins
+            # 4. Build muting/ducking time intervals with precise safety margins
             intervals: list[tuple[float, float]] = []
-
-            # Safety margins: 180ms pre-roll to catch breath/onset, 280ms post-roll to catch decay/echo
-            pre_roll_sec = 0.18
-            post_roll_sec = 0.28
+            pre_roll_sec = 0.12
+            post_roll_sec = 0.18
 
             # Inspect TTS chunk lengths if available in work_dir / "tts_chunks"
             chunks_dir = ctx.work_dir / "tts_chunks"
@@ -240,20 +251,17 @@ class AudioMixingStage(PipelineStage):
                 s_sec = max(0.0, float(seg.get("start", 0.0)))
                 e_sec = max(s_sec, float(seg.get("end", s_sec + 0.3)))
 
-                # Ensure mute window extends to cover the synthesized TTS chunk duration
-                if idx in chunk_durations:
-                    chunk_dur = chunk_durations[idx]
-                    e_sec = max(e_sec, s_sec + chunk_dur)
-
+                chunk_dur = chunk_durations.get(idx, 0.0)
+                coverage_end = max(e_sec, s_sec + chunk_dur)
                 s_mute = max(0.0, s_sec - pre_roll_sec)
-                e_mute = e_sec + post_roll_sec
+                e_mute = coverage_end + post_roll_sec
                 intervals.append((s_mute, e_mute))
 
             # Also detect active energy in the TTS audio track itself as a failsafe
             tts_abs = np.abs(tts_samples)
             if bg_ch > 1 and tts_abs.ndim > 1:
                 tts_abs = np.max(tts_abs, axis=1)
-            active_tts_mask = tts_abs > 120.0
+            active_tts_mask = tts_abs > 100.0
             if np.any(active_tts_mask):
                 active_indices = np.where(active_tts_mask)[0]
                 diffs = np.diff(active_indices)
@@ -261,16 +269,16 @@ class AudioMixingStage(PipelineStage):
                 chunks = np.split(active_indices, split_points)
                 for chk in chunks:
                     if len(chk) > 0:
-                        s_t = max(0.0, (chk[0] / bg_sr) - 0.15)
-                        e_t = (chk[-1] / bg_sr) + 0.25
+                        s_t = max(0.0, (chk[0] / bg_sr) - 0.12)
+                        e_t = (chk[-1] / bg_sr) + 0.18
                         intervals.append((s_t, e_t))
 
-            # 5. Merge contiguous and nearby intervals (within 0.65s) to eliminate pauses/breath leaks
+            # 5. Merge contiguous and nearby intervals (within 0.35s) so dialogue pauses let background breathe
             merged_intervals: list[tuple[float, float]] = []
             if intervals:
                 intervals.sort(key=lambda x: x[0])
                 merged_intervals.append(intervals[0])
-                merge_gap = 0.65
+                merge_gap = 0.35
                 for cur_s, cur_e in intervals[1:]:
                     prev_s, prev_e = merged_intervals[-1]
                     if cur_s <= prev_e + merge_gap:
@@ -285,27 +293,30 @@ class AudioMixingStage(PipelineStage):
             fade_in_samples = int(0.10 * bg_sr)   # 100ms fade in after speech end
 
             for s_sec, e_sec in merged_intervals:
-                s_idx = max(0, int(s_sec * bg_sr))
-                e_idx = min(frames_count, int(e_sec * bg_sr))
+                s_idx = max(0, min(frames_count, int(s_sec * bg_sr)))
+                e_idx = max(s_idx, min(frames_count, int(e_sec * bg_sr)))
+                if s_idx >= frames_count:
+                    continue
 
                 # Smooth Hann curve fade out before dialogue
-                fo_start = max(0, s_idx - fade_out_samples)
-                fo_len = s_idx - fo_start
-                if fo_len > 0:
-                    t_fo = np.linspace(0.0, np.pi, fo_len, endpoint=False)
+                fo_start = max(0, min(frames_count, s_idx - fade_out_samples))
+                fo_slice = gain[fo_start:s_idx]
+                if len(fo_slice) > 0:
+                    t_fo = np.linspace(0.0, np.pi, len(fo_slice), endpoint=False)
                     curve_fo = target_gain + (1.0 - target_gain) * 0.5 * (1.0 + np.cos(t_fo))
-                    gain[fo_start:s_idx] = np.minimum(gain[fo_start:s_idx], curve_fo)
+                    gain[fo_start:s_idx] = np.minimum(fo_slice, curve_fo)
 
                 # Core dialogue window: 100% silence when mute_speaker is True
-                gain[s_idx:e_idx] = target_gain
+                if e_idx > s_idx:
+                    gain[s_idx:e_idx] = target_gain
 
                 # Smooth Hann curve fade in after dialogue
-                fi_end = min(frames_count, e_idx + fade_in_samples)
-                fi_len = fi_end - e_idx
-                if fi_len > 0:
-                    t_fi = np.linspace(np.pi, 0.0, fi_len, endpoint=False)
+                fi_end = max(e_idx, min(frames_count, e_idx + fade_in_samples))
+                fi_slice = gain[e_idx:fi_end]
+                if len(fi_slice) > 0:
+                    t_fi = np.linspace(np.pi, 0.0, len(fi_slice), endpoint=False)
                     curve_fi = target_gain + (1.0 - target_gain) * 0.5 * (1.0 + np.cos(t_fi))
-                    gain[e_idx:fi_end] = np.minimum(gain[e_idx:fi_end], curve_fi)
+                    gain[e_idx:fi_end] = np.minimum(fi_slice, curve_fi)
 
             # 7. Apply gain envelope and background volume
             if bg_ch > 1:

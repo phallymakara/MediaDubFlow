@@ -15,6 +15,7 @@ def test_wizard_step1_validation(qtbot, tmp_path: Path) -> None:
     mock_bridge = MagicMock()
     wizard = ProjectWizardScreen(bridge=mock_bridge)
     qtbot.addWidget(wizard)
+    wizard.show()
 
     # Initially step 0
     assert wizard._step_stack.currentIndex() == 0
@@ -49,6 +50,7 @@ def test_wizard_step2_episodes_selection(qtbot, tmp_path: Path) -> None:
     mock_bridge = MagicMock()
     wizard = ProjectWizardScreen(bridge=mock_bridge)
     qtbot.addWidget(wizard)
+    wizard.show()
 
     # Create dummy video files
     folder = tmp_path / "drama_season1"
@@ -84,6 +86,7 @@ def test_wizard_step3_glossary_validation(qtbot) -> None:
     mock_bridge = MagicMock()
     wizard = ProjectWizardScreen(bridge=mock_bridge)
     qtbot.addWidget(wizard)
+    wizard.show()
 
     wizard._update_stepper(2)
     assert wizard._step_stack.currentIndex() == 2
@@ -106,11 +109,26 @@ def test_wizard_step3_glossary_validation(qtbot) -> None:
     assert mock_bridge.run_async.called
 
 
+def test_wizard_output_folder_prefill(qtbot, tmp_path: Path) -> None:
+    """Verifies output folder automatically prefills with Dubbed_Khmer subfolder."""
+    mock_bridge = MagicMock()
+    wizard = ProjectWizardScreen(bridge=mock_bridge)
+    qtbot.addWidget(wizard)
+    wizard.show()
+
+    drama_dir = tmp_path / "MyDrama"
+    drama_dir.mkdir()
+    wizard._set_folder_path(drama_dir)
+
+    assert "Dubbed_Khmer" in wizard._txt_output_folder.text()
+
+
 def test_wizard_cancel_signal(qtbot) -> None:
     """Clicking cancel on step 1 emits the cancelled signal."""
     mock_bridge = MagicMock()
     wizard = ProjectWizardScreen(bridge=mock_bridge)
     qtbot.addWidget(wizard)
+    wizard.show()
 
     with qtbot.waitSignal(wizard.cancelled, timeout=1000):
         wizard.cancelled.emit()

@@ -124,7 +124,7 @@ class Settings(BaseSettings):
         description="Coqui TTS model identifier for Khmer",
     )
     tts_speed: float = Field(
-        default=1.5,
+        default=1.7,
         ge=0.5,
         le=2.0,
         description="Speech rate speed factor for Khmer TTS (0.5x to 2.0x)",

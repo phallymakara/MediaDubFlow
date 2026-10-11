@@ -31,7 +31,7 @@ class TTSGenerationStage(PipelineStage):
             and ctx.tts_audio_path.stat().st_size > 0
         )
 
-    async def _synthesize_chunk(self, text: str, chunk_wav: Path) -> bool:
+    async def _synthesize_chunk(self, text: str, chunk_wav: Path, voice_override: str | None = None) -> bool:
         """Synthesize a single text line to a 16kHz mono WAV file."""
         temp_audio = chunk_wav.with_suffix(".mp3")
         try:
@@ -41,9 +41,11 @@ class TTSGenerationStage(PipelineStage):
                 from openai import AsyncOpenAI  # noqa: PLC0415
 
                 client = AsyncOpenAI(api_key=settings.openai_api_key, timeout=60.0)
+                # Map female/Sreymom to 'nova', male to 'alloy'
+                openai_voice = "nova" if (voice_override and "Sreymom" in voice_override) else "alloy"
                 response = await client.audio.speech.create(
                     model="tts-1",
-                    voice="alloy",
+                    voice=openai_voice,
                     input=text,
                     speed=max(0.25, min(4.0, float(settings.tts_speed))),
                 )
@@ -52,7 +54,7 @@ class TTSGenerationStage(PipelineStage):
                 # Default: Edge-TTS with native Khmer neural voices
                 import edge_tts  # noqa: PLC0415
 
-                voice = settings.tts_voice or "km-KH-PisethNeural"
+                voice = voice_override or settings.tts_voice or "km-KH-PisethNeural"
                 rate_pct = int(round((settings.tts_speed - 1.0) * 100))
                 rate_str = f"{rate_pct:+d}%"
                 vol_pct = int(round((settings.tts_volume - 1.0) * 100))
@@ -141,7 +143,11 @@ class TTSGenerationStage(PipelineStage):
                     current_sample_pos = target_start_sample
 
                 chunk_wav = chunks_dir / f"chunk_{idx:04d}.wav"
-                success = await self._synthesize_chunk(text, chunk_wav)
+                gender = str(seg.get("gender", "")).lower()
+                voice_for_seg = seg.get("tts_voice") or (
+                    "km-KH-SreymomNeural" if gender == "female" else None
+                )
+                success = await self._synthesize_chunk(text, chunk_wav, voice_override=voice_for_seg)
                 if success and chunk_wav.exists():
                     try:
                         with wave.open(str(chunk_wav), "rb") as in_wav:

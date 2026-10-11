@@ -63,6 +63,7 @@ CONTEXT_CHECKPOINT_MAP: dict[str, str] = {
     "tts_audio_path": "tts_audio_path",
     "mixed_audio_path": "mixed_audio_path",
     "output_video_path": "output_video_path",
+    "title": "title",
 }
 
 # Mapping between stage names and EpisodeStatus enum values
@@ -335,6 +336,9 @@ class JobManager(QObject):
             for key, value in updates.items():
                 if hasattr(ctx, key):
                     setattr(ctx, key, value)
+                if key == "title" and value:
+                    ctx.metadata["title"] = value
+                    ctx.metadata["khmer_title"] = value
 
                 if key in CONTEXT_CHECKPOINT_MAP and value is not None:
                     db_field = CONTEXT_CHECKPOINT_MAP[key]
@@ -371,10 +375,21 @@ class JobManager(QObject):
 
             work_dir = settings.cache_dir / f"episode_{episode_id}"
             work_dir.mkdir(parents=True, exist_ok=True)
-            output_dir = settings.output_root / f"episode_{episode_id}"
+            if episode.project and episode.project.output_folder:
+                output_dir = Path(episode.project.output_folder).resolve()
+            else:
+                output_dir = settings.output_root / f"episode_{episode_id}"
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            metadata: dict[str, object] = {}
+            metadata: dict[str, object] = {
+                "episode_number": episode.episode_number,
+                "project_name": episode.project.name if episode.project else "",
+                "project_source_language": episode.project.source_language if episode.project else None,
+            }
+            if episode.title:
+                metadata["title"] = episode.title
+                metadata["khmer_title"] = episode.title
+
             if episode.project and episode.project.glossary_json:
                 try:
                     import json  # noqa: PLC0415
@@ -423,7 +438,11 @@ class JobManager(QObject):
                 source_file=source_path,
                 work_dir=work_dir,
                 output_dir=output_dir,
-                source_language=episode.detected_language or "",
+                source_language=(
+                    episode.detected_language
+                    or (episode.project.source_language if episode.project else "")
+                    or ""
+                ),
                 extracted_audio=_safe_checkpoint(episode.extracted_audio_path),
                 transcript_path=_safe_checkpoint(episode.transcript_path),
                 diarization_path=_safe_checkpoint(episode.diarization_path),
@@ -433,6 +452,7 @@ class JobManager(QObject):
                 tts_audio_path=_safe_checkpoint(episode.tts_audio_path),
                 mixed_audio_path=_safe_checkpoint(episode.mixed_audio_path),
                 output_video_path=_safe_checkpoint(episode.output_video_path),
+                title=episode.title,
                 metadata=metadata,
             )
 

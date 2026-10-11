@@ -16,7 +16,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QByteArray, QSettings, QSize, Qt, Signal
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -24,18 +25,20 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QProgressBar,
     QPushButton,
-    QScrollArea,
     QSlider,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
+
 from mediadubflow.config.settings import PipelineOutputMode, settings
-from mediadubflow.database.repository import get_project
+from mediadubflow.database.repository import get_episode, get_project
 from mediadubflow.database.session import get_session
 from mediadubflow.models.orm import Episode, EpisodeStatus, Project
 
@@ -102,15 +105,19 @@ class WorkspaceScreen(QWidget):
         self._table.setHorizontalHeaderLabels(
             ["Episode", "Source Video", "Status", "Pipeline Progress", "Action"]
         )
-        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self._table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self._table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-        self._table.setColumnWidth(0, 85)
+        header = self._table.horizontalHeader()
+        header.setSectionsMovable(False)
+        header.setStretchLastSection(False)
+        header.setCascadingSectionResizes(True)
+        for col in range(5):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        self._table.setColumnWidth(0, 90)
+        self._table.setColumnWidth(1, 280)
+        self._table.setColumnWidth(2, 120)
+        self._table.setColumnWidth(3, 260)
         self._table.setColumnWidth(4, 110)
+        self._restore_column_widths()
+        header.sectionResized.connect(self._on_column_resized)
         self._table.verticalHeader().setVisible(False)
         self._table.verticalHeader().setDefaultSectionSize(52)
         self._table.setWordWrap(True)
@@ -134,114 +141,148 @@ class WorkspaceScreen(QWidget):
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
 
-        # Back Navigation
-        self._btn_back = QPushButton("← Projects")
+        # 1. Back Navigation Button with proper arrow back icon
+        self._btn_back = QPushButton()
+        self._btn_back.setIcon(self._create_back_arrow_icon())
+        self._btn_back.setIconSize(QSize(18, 18))
+        self._btn_back.setFixedSize(30, 30)
         self._btn_back.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_back.setToolTip("Back to Projects")
         self._btn_back.clicked.connect(self.back_requested.emit)
         layout.addWidget(self._btn_back)
 
-        layout.addSpacing(8)
-
-        # Project Info
-        title_box = QVBoxLayout()
-        title_box.setSpacing(2)
+        # 2. Project Title (clean, no nested container)
         self._lbl_project_title = QLabel("No Project Loaded")
-        self._lbl_project_title.setWordWrap(True)
         self._lbl_project_title.setStyleSheet("font-size: 18px; font-weight: 700; color: #0f172a;")
+        layout.addWidget(self._lbl_project_title)
+
+        # Retained attribute for safety
         self._lbl_project_meta = QLabel("")
-        self._lbl_project_meta.setWordWrap(True)
-        self._lbl_project_meta.setStyleSheet("font-size: 12px; color: #64748b;")
-        title_box.addWidget(self._lbl_project_title)
-        title_box.addWidget(self._lbl_project_meta)
-        layout.addLayout(title_box)
 
         layout.addStretch(1)
 
-        # Workflow Mode Selector (let user select mode when starting dubbing)
-        mode_box = QHBoxLayout()
-        mode_box.setSpacing(6)
-        lbl_mode = QLabel("Workflow Mode:")
-        lbl_mode.setStyleSheet("font-size: 12px; font-weight: 600; color: #475569;")
+        # 3. Mode selector (height matched with Start All button at 30px)
+        lbl_mode = QLabel("Mode:")
+        lbl_mode.setStyleSheet("font-size: 13px; font-weight: 600; color: #475569;")
         self._cmb_workflow_mode = QComboBox()
+        self._cmb_workflow_mode.setFixedHeight(30)
         self._cmb_workflow_mode.setMinimumWidth(180)
-        self._cmb_workflow_mode.addItem("Both (Dubbing + Subtitles)", PipelineOutputMode.BOTH)
+        self._cmb_workflow_mode.addItem("Both (Dub + Subs)", PipelineOutputMode.BOTH)
         self._cmb_workflow_mode.addItem("Subtitles Only", PipelineOutputMode.SUBTITLES_ONLY)
-        self._cmb_workflow_mode.addItem("Voice Dubbing Only", PipelineOutputMode.VOICE_DUBBING_ONLY)
-
+        self._cmb_workflow_mode.addItem("Voice Dub Only", PipelineOutputMode.VOICE_DUBBING_ONLY)
         idx = self._cmb_workflow_mode.findData(settings.output_mode)
         if idx >= 0:
             self._cmb_workflow_mode.setCurrentIndex(idx)
         self._cmb_workflow_mode.currentIndexChanged.connect(self._on_workflow_mode_changed)
 
-        mode_box.addWidget(lbl_mode)
-        mode_box.addWidget(self._cmb_workflow_mode)
-        layout.addLayout(mode_box)
+        layout.addWidget(lbl_mode)
+        layout.addWidget(self._cmb_workflow_mode)
 
-        layout.addSpacing(6)
-
-        # Global Control Buttons
-        self._btn_start_all = QPushButton("Start All Episodes")
+        # 4. Global Control Buttons (height matched at 30px)
+        self._btn_start_all = QPushButton("▶ Start All")
         self._btn_start_all.setObjectName("primaryButton")
+        self._btn_start_all.setFixedHeight(30)
         self._btn_start_all.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_start_all.clicked.connect(self._on_start_all_clicked)
+        layout.addWidget(self._btn_start_all)
 
-        self._btn_pause_all = QPushButton("Pause Queue")
+        self._btn_pause_all = QPushButton("⏸ Pause")
+        self._btn_pause_all.setFixedHeight(30)
         self._btn_pause_all.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_pause_all.clicked.connect(self._on_pause_all_clicked)
+        layout.addWidget(self._btn_pause_all)
+
+        # 5. Video Combination Controls
+        self._spin_combine_count = QSpinBox()
+        self._spin_combine_count.setRange(2, 500)
+        self._spin_combine_count.setValue(3)
+        self._spin_combine_count.setSuffix(" in 1")
+        self._spin_combine_count.setFixedWidth(78)
+        self._spin_combine_count.setFixedHeight(30)
+        self._spin_combine_count.setToolTip("Specific number of videos to combine into one file (default: 3)")
+        self._spin_combine_count.valueChanged.connect(self._on_combine_count_changed)
+
+        self._btn_combine_batch = QPushButton("+ Combine 3 in 1")
+        self._btn_combine_batch.setFixedHeight(30)
+        self._btn_combine_batch.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_combine_batch.setToolTip("Combine episodes in batches (default: 3 in 1) into merged video files")
+        self._btn_combine_batch.clicked.connect(self._on_combine_batch_clicked)
+
+        self._btn_combine_all = QPushButton("+ Combine All in 1")
+        self._btn_combine_all.setFixedHeight(30)
+        self._btn_combine_all.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_combine_all.setToolTip("Combine all episodes in the project into a single full video file")
+        self._btn_combine_all.clicked.connect(self._on_combine_all_clicked)
+
+        layout.addWidget(self._spin_combine_count)
+        layout.addWidget(self._btn_combine_batch)
+        layout.addWidget(self._btn_combine_all)
+
+        # 6. Folder & Episode Inspection Controls
+        self._btn_open_folder = QPushButton("Folder")
+        self._btn_open_folder.setFixedHeight(30)
+        self._btn_open_folder.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_open_folder.setToolTip("Open destination folder containing dubbed episodes in system file manager")
+        self._btn_open_folder.clicked.connect(self._on_open_output_folder_clicked)
+        layout.addWidget(self._btn_open_folder)
 
         self._btn_edit_speech = QPushButton("Edit Speech")
+        self._btn_edit_speech.setFixedHeight(30)
         self._btn_edit_speech.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_edit_speech.setEnabled(False)
         self._btn_edit_speech.clicked.connect(self._on_edit_speech_clicked)
+        layout.addWidget(self._btn_edit_speech)
 
-        self._btn_redub_selected = QPushButton("Re-dub Selected")
+        self._btn_redub_selected = QPushButton("Re-dub")
+        self._btn_redub_selected.setFixedHeight(30)
         self._btn_redub_selected.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_redub_selected.setEnabled(False)
         self._btn_redub_selected.setToolTip("Re-synthesize dialogue at active speech speed and re-render the dubbed video")
         self._btn_redub_selected.clicked.connect(self._on_redub_selected_clicked)
-
-        layout.addWidget(self._btn_start_all)
-        layout.addWidget(self._btn_pause_all)
-        layout.addWidget(self._btn_edit_speech)
         layout.addWidget(self._btn_redub_selected)
 
         return widget
 
-    def _build_audio_controls_bar(self) -> QWidget:
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll_area.setFixedHeight(56)
 
-        widget = QWidget()
-        widget.setStyleSheet(
-            "background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 4px; padding: 4px 12px;"
+    @staticmethod
+    def _create_back_arrow_icon() -> QIcon:
+        """Create a crisp developer-tool vector arrow back icon (stem with left arrow head)."""
+        svg = (
+            b'<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" '
+            b'fill="none" stroke="#0f172a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">'
+            b'<line x1="19" y1="12" x2="5" y2="12"></line>'
+            b'<polyline points="12 19 5 12 12 5"></polyline>'
+            b'</svg>'
         )
-        layout = QHBoxLayout(widget)
-        layout.setContentsMargins(10, 4, 10, 4)
-        layout.setSpacing(12)
+        pm = QPixmap()
+        pm.loadFromData(QByteArray(svg))
+        return QIcon(pm)
 
-        # 1. Mute Original Speaker Toggle
+    def _build_audio_controls_bar(self) -> QWidget:
+        # Flat toolbar row without any enclosing cards, borders, or nested container boxes
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(18)
+
+        # 1. Mute Original Speaker Toggle (No container around it)
         self._chk_mute_original = QCheckBox("Mute Original Voice")
         self._chk_mute_original.setChecked(settings.mute_original_speaker)
-        self._chk_mute_original.setStyleSheet("font-weight: 600; font-size: 12px; color: #0f172a;")
+        self._chk_mute_original.setStyleSheet("font-weight: 600; font-size: 13px; color: #0f172a;")
         self._chk_mute_original.toggled.connect(self._on_mute_original_toggled)
         layout.addWidget(self._chk_mute_original)
 
-        layout.addSpacing(4)
-
-        # 2. Sound Volume Control (Decrease, Horizontal Slider, Increase, Readout)
+        # 2. Sound Volume Control (TTS Sound) (No container around it)
         vol_box = QHBoxLayout()
         vol_box.setSpacing(6)
         lbl_vol = QLabel("TTS Sound:")
-        lbl_vol.setStyleSheet("font-weight: 600; font-size: 12px; color: #475569;")
+        lbl_vol.setStyleSheet("font-weight: 600; font-size: 13px; color: #475569;")
 
-        self._btn_vol_down = QPushButton("-")
-        self._btn_vol_down.setFixedSize(24, 24)
+        self._btn_vol_down = QPushButton("−")
+        self._btn_vol_down.setProperty("stepBtn", True)
+        self._btn_vol_down.setFixedSize(26, 26)
         self._btn_vol_down.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_vol_down.setToolTip("Decrease sound volume")
         self._btn_vol_down.clicked.connect(self._on_volume_decrease)
@@ -256,7 +297,8 @@ class WorkspaceScreen(QWidget):
         self._slider_volume.valueChanged.connect(self._on_volume_slider_changed)
 
         self._btn_vol_up = QPushButton("+")
-        self._btn_vol_up.setFixedSize(24, 24)
+        self._btn_vol_up.setProperty("stepBtn", True)
+        self._btn_vol_up.setFixedSize(26, 26)
         self._btn_vol_up.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_vol_up.setToolTip("Increase sound volume")
         self._btn_vol_up.clicked.connect(self._on_volume_increase)
@@ -272,16 +314,15 @@ class WorkspaceScreen(QWidget):
         vol_box.addWidget(self._lbl_vol_val)
         layout.addLayout(vol_box)
 
-        layout.addSpacing(4)
-
-        # 3. Background Audio Volume Control
+        # 3. Background Audio Volume Control (Background Sound) (No container around it)
         bg_vol_box = QHBoxLayout()
         bg_vol_box.setSpacing(6)
         lbl_bg_vol = QLabel("Background Sound:")
-        lbl_bg_vol.setStyleSheet("font-weight: 600; font-size: 12px; color: #475569;")
+        lbl_bg_vol.setStyleSheet("font-weight: 600; font-size: 13px; color: #475569;")
 
-        self._btn_bg_vol_down = QPushButton("-")
-        self._btn_bg_vol_down.setFixedSize(24, 24)
+        self._btn_bg_vol_down = QPushButton("−")
+        self._btn_bg_vol_down.setProperty("stepBtn", True)
+        self._btn_bg_vol_down.setFixedSize(26, 26)
         self._btn_bg_vol_down.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_bg_vol_down.setToolTip("Decrease background sound volume")
         self._btn_bg_vol_down.clicked.connect(self._on_bg_vol_decrease)
@@ -296,7 +337,8 @@ class WorkspaceScreen(QWidget):
         self._slider_bg_volume.valueChanged.connect(self._on_bg_vol_slider_changed)
 
         self._btn_bg_vol_up = QPushButton("+")
-        self._btn_bg_vol_up.setFixedSize(24, 24)
+        self._btn_bg_vol_up.setProperty("stepBtn", True)
+        self._btn_bg_vol_up.setFixedSize(26, 26)
         self._btn_bg_vol_up.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_bg_vol_up.setToolTip("Increase background sound volume")
         self._btn_bg_vol_up.clicked.connect(self._on_bg_vol_increase)
@@ -312,16 +354,15 @@ class WorkspaceScreen(QWidget):
         bg_vol_box.addWidget(self._lbl_bg_vol_val)
         layout.addLayout(bg_vol_box)
 
-        layout.addSpacing(4)
-
-        # 3. Horizontal Scroll Speed Control (0.50x to 2.00x)
+        # 4. Speech Speed Control (Speech Speed) (No container around it)
         speed_box = QHBoxLayout()
         speed_box.setSpacing(6)
         lbl_speed = QLabel("Speech Speed:")
-        lbl_speed.setStyleSheet("font-weight: 600; font-size: 12px; color: #475569;")
+        lbl_speed.setStyleSheet("font-weight: 600; font-size: 13px; color: #475569;")
 
-        self._btn_speed_down = QPushButton("-")
-        self._btn_speed_down.setFixedSize(24, 24)
+        self._btn_speed_down = QPushButton("−")
+        self._btn_speed_down.setProperty("stepBtn", True)
+        self._btn_speed_down.setFixedSize(26, 26)
         self._btn_speed_down.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_speed_down.setToolTip("Decrease speech speed")
         self._btn_speed_down.clicked.connect(self._on_speed_decrease)
@@ -336,7 +377,8 @@ class WorkspaceScreen(QWidget):
         self._slider_speed.valueChanged.connect(self._on_speed_slider_changed)
 
         self._btn_speed_up = QPushButton("+")
-        self._btn_speed_up.setFixedSize(24, 24)
+        self._btn_speed_up.setProperty("stepBtn", True)
+        self._btn_speed_up.setFixedSize(26, 26)
         self._btn_speed_up.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_speed_up.setToolTip("Increase speech speed")
         self._btn_speed_up.clicked.connect(self._on_speed_increase)
@@ -345,24 +387,15 @@ class WorkspaceScreen(QWidget):
         self._lbl_speed_val.setFixedWidth(44)
         self._lbl_speed_val.setStyleSheet("font-size: 12px; font-weight: 600; color: #2563eb;")
 
-        self._btn_reset_speed = QPushButton("1.5x")
-        self._btn_reset_speed.setFixedHeight(24)
-        self._btn_reset_speed.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_reset_speed.setToolTip("Reset to default 1.50x speed")
-        self._btn_reset_speed.clicked.connect(lambda: self._slider_speed.setValue(150))
-
         speed_box.addWidget(lbl_speed)
         speed_box.addWidget(self._btn_speed_down)
         speed_box.addWidget(self._slider_speed)
         speed_box.addWidget(self._btn_speed_up)
         speed_box.addWidget(self._lbl_speed_val)
-        speed_box.addWidget(self._btn_reset_speed)
         layout.addLayout(speed_box)
 
         layout.addStretch(1)
-
-        scroll_area.setWidget(widget)
-        return scroll_area
+        return widget
 
     def _on_mute_original_toggled(self, checked: bool) -> None:
         settings.mute_original_speaker = checked
@@ -488,8 +521,9 @@ class WorkspaceScreen(QWidget):
         self._project = project
         self._episodes = list(project.episodes) if project.episodes else []
         self._lbl_project_title.setText(project.name)
+        output_display = project.output_folder if project.output_folder else "(default output directory)"
         self._lbl_project_meta.setText(
-            f"Target: Khmer (km)  |  Path: {project.source_folder}  |  Episodes: {len(self._episodes)}"
+            f"Target: Khmer (km)  |  Output: {output_display}  |  Episodes: {len(self._episodes)}"
         )
 
         mode_idx = self._cmb_workflow_mode.findData(settings.output_mode)
@@ -520,12 +554,13 @@ class WorkspaceScreen(QWidget):
             tag_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._table.setItem(row, 0, tag_item)
 
-            # Col 1: Filename
+            # Col 1: Khmer Title or Filename
             filename = (
                 Path(ep.source_file).name if ep.source_file else f"Episode {ep.episode_number}"
             )
-            file_item = QTableWidgetItem(filename)
-            file_item.setToolTip(ep.source_file or filename)
+            display_title = ep.title if ep.title else filename
+            file_item = QTableWidgetItem(display_title)
+            file_item.setToolTip(f"{display_title}\nSource: {ep.source_file or filename}")
             file_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
             self._table.setItem(row, 1, file_item)
 
@@ -546,6 +581,31 @@ class WorkspaceScreen(QWidget):
             self._update_action_button(action_btn, ep)
             self._row_action_buttons[ep.id] = action_btn
             self._table.setCellWidget(row, 4, self._wrap_cell(action_btn))
+
+    def _restore_column_widths(self) -> None:
+        """Restore user-persisted column widths from QSettings if available."""
+        self._is_restoring_columns = True
+        try:
+            qsettings = QSettings("MediaDubFlow", "Workspace")
+            widths = qsettings.value("table_column_widths")
+            if widths and isinstance(widths, (list, tuple)) and len(widths) == 5:
+                for i, w in enumerate(widths):
+                    try:
+                        w_int = int(w)
+                        if w_int > 20:
+                            self._table.setColumnWidth(i, w_int)
+                    except (ValueError, TypeError):
+                        pass
+        finally:
+            self._is_restoring_columns = False
+
+    def _on_column_resized(self, _logical_index: int, _old_size: int, _new_size: int) -> None:
+        """Persist column widths to QSettings whenever adjusted by the user."""
+        if getattr(self, "_is_restoring_columns", False):
+            return
+        widths = [self._table.columnWidth(i) for i in range(5)]
+        qsettings = QSettings("MediaDubFlow", "Workspace")
+        qsettings.setValue("table_column_widths", widths)
 
     def _wrap_cell(self, widget: QWidget) -> QWidget:
         container = QWidget()
@@ -600,11 +660,10 @@ class WorkspaceScreen(QWidget):
         return widget, prog_bar, stage_lbl
 
     def _update_action_button(self, btn: QPushButton, ep: Episode) -> None:
-        if btn.receivers(btn.clicked) > 0:
-            try:
-                btn.clicked.disconnect()
-            except RuntimeError:
-                pass
+        try:
+            btn.clicked.disconnect()
+        except (RuntimeError, TypeError):
+            pass
 
         if ep.status == EpisodeStatus.DONE:
             btn.setText("Review")
@@ -684,7 +743,84 @@ class WorkspaceScreen(QWidget):
         self._job_manager.stop()
         self._log_activity("Processing paused. Active stages will finish.")
 
+    def _on_open_output_folder_clicked(self) -> None:
+        """Open destination output directory containing dubbed episodes in system file manager."""
+        if not self._project:
+            return
+        dest = (
+            Path(self._project.output_folder).resolve()
+            if self._project.output_folder
+            else settings.output_root
+        )
+        dest.mkdir(parents=True, exist_ok=True)
+        import subprocess
+        import sys
+        try:
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", str(dest)])
+            elif sys.platform == "win32":
+                subprocess.Popen(["explorer", str(dest)])
+            else:
+                subprocess.Popen(["xdg-open", str(dest)])
+            self._log_activity(f"Opened output folder: {dest}")
+        except Exception as exc:
+            logger.error("Failed to open output folder {}: {}", dest, exc)
+            self._log_activity(f"Failed to open output folder: {exc}")
+
+    def _on_combine_count_changed(self, value: int) -> None:
+        """Update batch combination button label when number of combination changes."""
+        self._btn_combine_batch.setText(f"+ Combine {value} in 1")
+        self._btn_combine_batch.setToolTip(
+            f"Combine episodes in batches of {value} into merged video files"
+        )
+
+
+    def _on_combine_batch_clicked(self) -> None:
+        """Open video combination dialog configured for batch combination (e.g. 3 in 1)."""
+        if not self._project or not self._episodes:
+            QMessageBox.information(
+                self,
+                "No Episodes",
+                "Please load a project with episodes before combining videos.",
+            )
+            return
+
+        from mediadubflow.gui.dialogs.combine_videos_dialog import CombineVideosDialog
+
+        dlg = CombineVideosDialog(
+            project=self._project,
+            episodes=self._episodes,
+            bridge=self._bridge,
+            initial_mode="batch",
+            initial_batch_size=self._spin_combine_count.value(),
+            parent=self,
+        )
+        dlg.exec()
+
+    def _on_combine_all_clicked(self) -> None:
+        """Open video combination dialog configured to combine all episodes into one."""
+        if not self._project or not self._episodes:
+            QMessageBox.information(
+                self,
+                "No Episodes",
+                "Please load a project with episodes before combining videos.",
+            )
+            return
+
+        from mediadubflow.gui.dialogs.combine_videos_dialog import CombineVideosDialog
+
+        dlg = CombineVideosDialog(
+            project=self._project,
+            episodes=self._episodes,
+            bridge=self._bridge,
+            initial_mode="all",
+            initial_batch_size=self._spin_combine_count.value(),
+            parent=self,
+        )
+        dlg.exec()
+
     # -------------------------------------------------------------------------
+
     # Slot Callbacks from JobManager
     # -------------------------------------------------------------------------
     def _on_job_progress_updated(self, episode_id: int, stage_name: str, pct: int) -> None:
@@ -775,6 +911,28 @@ class WorkspaceScreen(QWidget):
                 ep.status = EpisodeStatus.DONE
                 break
 
+        # Live refresh updated Khmer title in table
+        async def _fetch_ep_title() -> str | None:
+            async with get_session() as session:
+                ep_db = await get_episode(session, episode_id)
+                return ep_db.title if ep_db else None
+
+        def _on_title_fetched(title: str | None) -> None:
+            if title and episode_id in self._episode_row_map:
+                row_idx = self._episode_row_map[episode_id]
+                for ep in self._episodes:
+                    if ep.id == episode_id:
+                        ep.title = title
+                        break
+                cur_item = self._table.item(row_idx, 1)
+                tooltip = cur_item.toolTip() if cur_item else ""
+                new_item = QTableWidgetItem(title)
+                new_item.setToolTip(tooltip or title)
+                new_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+                self._table.setItem(row_idx, 1, new_item)
+
+        self._bridge.run_async(_fetch_ep_title(), on_success=_on_title_fetched)
+
         self._recalculate_kpis()
         self._log_activity(f"EP #{episode_id} completed successfully!")
 
@@ -824,14 +982,14 @@ class WorkspaceScreen(QWidget):
         self._btn_edit_speech.setEnabled(False)
         self._btn_edit_speech.setText("Edit Speech")
         self._btn_redub_selected.setEnabled(False)
-        self._btn_redub_selected.setText("Re-dub Selected")
+        self._btn_redub_selected.setText("Re-dub")
 
     def _update_selected_episode_ui(self, episode_id: int) -> None:
         for ep in self._episodes:
             if ep.id == episode_id:
                 ep_tag = f"EP {ep.episode_number:02d}" if ep.episode_number > 0 else f"#{ep.id}"
                 self._btn_edit_speech.setEnabled(True)
-                self._btn_edit_speech.setText(f"Edit Speech ({ep_tag})")
+                self._btn_edit_speech.setText(f"Edit ({ep_tag})")
                 can_redub = bool(
                     ep.status in (EpisodeStatus.DONE, EpisodeStatus.REVIEW)
                     or ep.translation_path
@@ -839,6 +997,8 @@ class WorkspaceScreen(QWidget):
                 self._btn_redub_selected.setEnabled(can_redub)
                 self._btn_redub_selected.setText(f"Re-dub ({ep_tag})")
                 break
+
+
 
     def _on_redub_selected_clicked(self) -> None:
         """Trigger rapid re-dubbing with active speech speed for currently selected episode."""

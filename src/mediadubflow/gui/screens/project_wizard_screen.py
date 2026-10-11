@@ -84,8 +84,8 @@ class MediaFolderDropZone(QFrame):
         empty_layout.setSpacing(6)
         empty_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        icon_lbl = QLabel("📁")
-        icon_lbl.setStyleSheet("font-size: 32px;")
+        icon_lbl = QLabel("+")
+        icon_lbl.setStyleSheet("font-size: 36px; font-weight: 700; color: #3b82f6;")
         icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         empty_layout.addWidget(icon_lbl)
 
@@ -149,8 +149,11 @@ class MediaFolderDropZone(QFrame):
         info_row = QHBoxLayout()
         info_row.setSpacing(12)
 
-        folder_icon = QLabel("📁")
-        folder_icon.setStyleSheet("font-size: 28px;")
+        folder_icon = QLabel("[DIR]")
+        folder_icon.setStyleSheet(
+            "font-size: 13px; font-weight: 700; color: #2563eb; background: #eff6ff; "
+            "border: 1px solid #bfdbfe; border-radius: 4px; padding: 4px 8px;"
+        )
         info_row.addWidget(folder_icon)
 
         text_col = QVBoxLayout()
@@ -517,6 +520,41 @@ class ProjectWizardScreen(QWidget):
         name_box.addWidget(self._err_name)
         layout.addLayout(name_box)
 
+        # 4. Dubbed Output Destination Folder Field
+        out_box = QVBoxLayout()
+        out_box.setSpacing(6)
+        out_lbl = QLabel("Dubbed Output Folder")
+        out_lbl.setStyleSheet("font-weight: 600; font-size: 13px; color: #0f172a;")
+        out_box.addWidget(out_lbl)
+
+        out_row = QHBoxLayout()
+        out_row.setSpacing(8)
+        self._txt_output_folder = QLineEdit()
+        self._txt_output_folder.setPlaceholderText(
+            "Select folder where dubbed episodes will be saved"
+        )
+        self._txt_output_folder.textChanged.connect(self._clear_output_folder_error)
+
+        btn_browse_out = QPushButton("Browse...")
+        btn_browse_out.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_browse_out.clicked.connect(self._on_browse_output_folder)
+
+        out_row.addWidget(self._txt_output_folder, stretch=1)
+        out_row.addWidget(btn_browse_out)
+        out_box.addLayout(out_row)
+
+        out_hint = QLabel(
+            "All exported Khmer dubbed video episodes will be saved directly into this directory."
+        )
+        out_hint.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        out_box.addWidget(out_hint)
+
+        self._err_output_folder = QLabel("")
+        self._err_output_folder.setStyleSheet("color: #dc2626; font-size: 12px; margin-top: 2px;")
+        self._err_output_folder.setVisible(False)
+        out_box.addWidget(self._err_output_folder)
+        layout.addLayout(out_box)
+
         layout.addStretch(1)
 
         scroll_area.setWidget(content_widget)
@@ -550,7 +588,30 @@ class ProjectWizardScreen(QWidget):
             self._txt_name.setText(folder_path.name.replace("_", " ").title())
             self._clear_name_error()
 
+        # Auto-populate output folder if empty
+        if not self._txt_output_folder.text().strip():
+            self._txt_output_folder.setText(str(folder_path / "Dubbed_Khmer"))
+            self._clear_output_folder_error()
+
         self._update_folder_preview(folder_path)
+
+    def _clear_output_folder_error(self) -> None:
+        self._err_output_folder.setVisible(False)
+        self._txt_output_folder.setStyleSheet("")
+
+    def _on_browse_output_folder(self) -> None:
+        initial = (
+            self._txt_output_folder.text().strip()
+            or (str(self._source_dir) if self._source_dir else str(Path.home()))
+        )
+        selected_dir = QFileDialog.getExistingDirectory(
+            self,
+            "Select Dubbed Output Folder",
+            initial,
+        )
+        if selected_dir:
+            self._txt_output_folder.setText(selected_dir)
+            self._clear_output_folder_error()
 
     def _on_browse_folder(self) -> None:
         selected_dir = QFileDialog.getExistingDirectory(
@@ -954,6 +1015,13 @@ class ProjectWizardScreen(QWidget):
         if not source_folder or not episodes:
             return
 
+        out_text = self._txt_output_folder.text().strip()
+        output_folder = Path(out_text).resolve() if out_text else (source_folder / "Dubbed_Khmer")
+        try:
+            output_folder.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            logger.warning("Could not pre-create output folder: {}", exc)
+
         # UI Loading State
         self._btn_create.setEnabled(False)
         self._btn_create.setText("Creating Project...")
@@ -966,6 +1034,7 @@ class ProjectWizardScreen(QWidget):
                     session=session,
                     name=project_name,
                     source_folder=source_folder,
+                    output_folder=output_folder,
                     target_language="km",
                     source_language=source_language,
                     glossary_json=glossary_json,
@@ -1006,9 +1075,11 @@ class ProjectWizardScreen(QWidget):
         self._selected_episodes = []
         self._txt_folder.clear()
         self._txt_name.clear()
+        self._txt_output_folder.clear()
         self._txt_glossary.clear()
         self._err_folder.setVisible(False)
         self._err_name.setVisible(False)
+        self._err_output_folder.setVisible(False)
         self._err_episodes.setVisible(False)
         self._err_glossary.setVisible(False)
         self._lbl_create_status.setVisible(False)

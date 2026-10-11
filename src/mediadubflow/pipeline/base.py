@@ -38,6 +38,7 @@ class StageContext:
     tts_audio_path: Path | None = None
     mixed_audio_path: Path | None = None
     output_video_path: Path | None = None
+    title: str | None = None
     # Arbitrary stage-specific metadata
     metadata: dict[str, Any] = field(default_factory=dict)
     # Callback to report intra-stage progress (0-100%)

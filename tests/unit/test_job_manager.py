@@ -231,9 +231,8 @@ async def test_job_manager_skips_stage_with_checkpoint(
     jm.stop()
     await worker_task
 
-    # Pre-existing checkpoint was skipped so no progress_updated was emitted for stage1
     assert completed_events == [ep_id]
-    assert len(progress_events) == 0
+    assert all("Cached" in st or "Complete" in st for _, st, _ in progress_events)
 
     # Clean up created cache dir
     if pre_existing.exists():

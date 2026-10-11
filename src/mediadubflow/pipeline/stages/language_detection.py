@@ -65,6 +65,26 @@ class LanguageDetectionStage(PipelineStage):
         ctx.language_confidence = confidence
 
         if confidence < self.CONFIDENCE_THRESHOLD:
+            fallback_lang = ctx.metadata.get("project_source_language")
+            if fallback_lang and isinstance(fallback_lang, str) and fallback_lang.strip():
+                logger.warning(
+                    "[Episode {}] Detected language '{}' with low confidence {:.1%}. "
+                    "Falling back to project source language '{}'.",
+                    ctx.episode_id,
+                    language,
+                    confidence,
+                    fallback_lang,
+                )
+                ctx.source_language = fallback_lang
+                return StageResult(
+                    success=True,
+                    message=f"Low confidence ({confidence:.1%}), fallback to project language '{fallback_lang}'",
+                    context_updates={
+                        "source_language": fallback_lang,
+                        "language_confidence": confidence,
+                    },
+                )
+
             msg = (
                 f"Detected language '{language}' with low confidence {confidence:.1%} "
                 f"(threshold is {self.CONFIDENCE_THRESHOLD:.1%}). Manual review required."

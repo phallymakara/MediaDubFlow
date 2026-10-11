@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -324,7 +324,8 @@ class EpisodeDetailPanel(QDialog):
         lbl_speed = QLabel("Dubbing Speed:")
         lbl_speed.setStyleSheet("font-weight: 600; font-size: 12px; color: #334155;")
 
-        self._btn_speed_down = QPushButton("-")
+        self._btn_speed_down = QPushButton("−")
+        self._btn_speed_down.setProperty("stepBtn", True)
         self._btn_speed_down.setFixedSize(24, 24)
         self._btn_speed_down.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_speed_down.setToolTip("Decrease speech speed")
@@ -340,6 +341,7 @@ class EpisodeDetailPanel(QDialog):
         self._slider_speed.valueChanged.connect(self._on_speed_slider_changed)
 
         self._btn_speed_up = QPushButton("+")
+        self._btn_speed_up.setProperty("stepBtn", True)
         self._btn_speed_up.setFixedSize(24, 24)
         self._btn_speed_up.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_speed_up.setToolTip("Increase speech speed")
@@ -349,13 +351,7 @@ class EpisodeDetailPanel(QDialog):
         self._lbl_speed_val.setFixedWidth(46)
         self._lbl_speed_val.setStyleSheet("font-size: 12px; font-weight: 700; color: #2563eb;")
 
-        self._btn_speed_reset = QPushButton("1.5x")
-        self._btn_speed_reset.setFixedHeight(24)
-        self._btn_speed_reset.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_speed_reset.setToolTip("Reset to default 1.50x speed")
-        self._btn_speed_reset.clicked.connect(lambda: self._slider_speed.setValue(150))
-
-        self._btn_redub = QPushButton(f"⚡ Re-dub Video at {settings.tts_speed:.2f}x")
+        self._btn_redub = QPushButton(f"↻ Re-dub Video at {settings.tts_speed:.2f}x")
         self._btn_redub.setObjectName("primaryButton")
         self._btn_redub.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_redub.setToolTip("Re-synthesize Khmer speech at this speed and re-render the dubbed video")
@@ -369,7 +365,6 @@ class EpisodeDetailPanel(QDialog):
         speed_layout.addWidget(self._slider_speed)
         speed_layout.addWidget(self._btn_speed_up)
         speed_layout.addWidget(self._lbl_speed_val)
-        speed_layout.addWidget(self._btn_speed_reset)
         speed_layout.addSpacing(6)
         speed_layout.addWidget(self._btn_redub)
         speed_layout.addWidget(self._lbl_redub_status)
@@ -462,14 +457,15 @@ class EpisodeDetailPanel(QDialog):
         self._tbl_speech.setHorizontalHeaderLabels(
             ["#", "Start", "End", "Original Dialogue", "Khmer Translation"]
         )
-        self._tbl_speech.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self._tbl_speech.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        self._tbl_speech.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self._tbl_speech.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self._tbl_speech.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        for c_idx in range(5):
+            self._tbl_speech.horizontalHeader().setSectionResizeMode(c_idx, QHeaderView.ResizeMode.Interactive)
         self._tbl_speech.setColumnWidth(0, 48)
         self._tbl_speech.setColumnWidth(1, 85)
         self._tbl_speech.setColumnWidth(2, 85)
+        self._tbl_speech.setColumnWidth(3, 260)
+        self._tbl_speech.setColumnWidth(4, 260)
+        self._restore_speech_column_widths()
+        self._tbl_speech.horizontalHeader().sectionResized.connect(self._on_speech_column_resized)
         self._tbl_speech.verticalHeader().setVisible(False)
         self._tbl_speech.verticalHeader().setMinimumSectionSize(38)
         self._tbl_speech.setWordWrap(True)
@@ -498,6 +494,32 @@ class EpisodeDetailPanel(QDialog):
         layout.addLayout(editor_footer)
 
         return widget
+
+    def _restore_speech_column_widths(self) -> None:
+        """Restore user-persisted column widths for speech table."""
+        self._is_restoring_speech_cols = True
+        try:
+            qsettings = QSettings("MediaDubFlow", "EpisodeDetail")
+            widths = qsettings.value("speech_column_widths")
+            if widths and isinstance(widths, (list, tuple)) and len(widths) == 5:
+                for i, w in enumerate(widths):
+                    try:
+                        w_int = int(w)
+                        if w_int > 20:
+                            self._tbl_speech.setColumnWidth(i, w_int)
+                    except (ValueError, TypeError):
+                        pass
+        finally:
+            self._is_restoring_speech_cols = False
+
+    def _on_speech_column_resized(self, _logical_index: int, _old_size: int, _new_size: int) -> None:
+        """Persist speech table column widths whenever adjusted by the user."""
+        if getattr(self, "_is_restoring_speech_cols", False):
+            return
+        widths = [self._tbl_speech.columnWidth(i) for i in range(5)]
+        qsettings = QSettings("MediaDubFlow", "EpisodeDetail")
+        qsettings.setValue("speech_column_widths", widths)
+
 
     def _build_preview_tab(self) -> QWidget:
         scroll_area = QScrollArea()
@@ -948,7 +970,7 @@ class EpisodeDetailPanel(QDialog):
         speed = round(value / 100.0, 2)
         settings.tts_speed = speed
         self._lbl_speed_val.setText(f"{speed:.2f}x")
-        self._btn_redub.setText(f"⚡ Re-dub Video at {speed:.2f}x")
+        self._btn_redub.setText(f"↻ Re-dub Video at {speed:.2f}x")
 
     def _on_speed_decrease_clicked(self) -> None:
         new_val = max(50, self._slider_speed.value() - 5)
@@ -968,7 +990,7 @@ class EpisodeDetailPanel(QDialog):
 
         if self._job_manager:
             self._btn_redub.setEnabled(False)
-            self._btn_redub.setText("⏳ Re-dubbing...")
+            self._btn_redub.setText("Re-dubbing...")
             self._lbl_redub_status.setStyleSheet("font-size: 11px; color: #2563eb; font-weight: 500;")
             self._lbl_redub_status.setText(f"Starting re-dub at {speed:.2f}x...")
             self._job_manager.redub_episode(self.episode.id, speed)
@@ -988,7 +1010,7 @@ class EpisodeDetailPanel(QDialog):
         if episode_id == self.episode.id:
             speed = round(self._slider_speed.value() / 100.0, 2)
             self._btn_redub.setEnabled(True)
-            self._btn_redub.setText(f"⚡ Re-dub Video at {speed:.2f}x")
+            self._btn_redub.setText(f"↻ Re-dub Video at {speed:.2f}x")
             self._lbl_redub_status.setStyleSheet("font-size: 11px; color: #16a34a; font-weight: 600;")
             self._lbl_redub_status.setText(f"✓ Re-dubbed at {speed:.2f}x successfully!")
             self._btn_play.setEnabled(True)
@@ -1004,7 +1026,7 @@ class EpisodeDetailPanel(QDialog):
         if episode_id == self.episode.id:
             speed = round(self._slider_speed.value() / 100.0, 2)
             self._btn_redub.setEnabled(True)
-            self._btn_redub.setText(f"⚡ Re-dub Video at {speed:.2f}x")
+            self._btn_redub.setText(f"↻ Re-dub Video at {speed:.2f}x")
             self._lbl_redub_status.setStyleSheet("font-size: 11px; color: #dc2626; font-weight: 500;")
             self._lbl_redub_status.setText(f"Failed: {error_message[:40]}")
 

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtWidgets import QLabel
+
 from mediadubflow.config.settings import TranslationProvider, settings
 from mediadubflow.gui.dialogs.episode_detail_panel import EpisodeDetailPanel
 from mediadubflow.gui.dialogs.language_correction_dialog import LanguageCorrectionDialog
@@ -13,8 +15,9 @@ from mediadubflow.gui.dialogs.settings_dialog import SettingsDialog
 from mediadubflow.models.orm import Episode, EpisodeStatus
 
 
-def test_settings_dialog_load_and_save(qtbot) -> None:
+def test_settings_dialog_load_and_save(qtbot, monkeypatch) -> None:
     """Verifies that SettingsDialog loads runtime values and updates settings on save."""
+    monkeypatch.setattr("dotenv.set_key", lambda *args, **kwargs: None)
     dlg = SettingsDialog()
     qtbot.addWidget(dlg)
 
@@ -43,7 +46,7 @@ def test_settings_dialog_load_and_save(qtbot) -> None:
     assert settings.max_concurrent_episodes == 4
     assert settings.openai_api_key == "sk-test-key-mock"
     assert settings.openai_base_url == "https://api.openai.com/v1"
-    assert settings.azure_openai_endpoint == "https://test-resource.openai.azure.com/"
+    assert settings.azure_openai_endpoint == "https://test-resource.openai.azure.com"
     assert settings.azure_openai_api_key == "azure-key-mock"
     assert settings.azure_openai_deployment_name == "gpt-4o"
     assert settings.gemini_api_key == "AIzaSy-test-gemini-mock"
@@ -105,8 +108,8 @@ def test_language_correction_dialog(qtbot) -> None:
 
     assert (
         "Episode 03" in dlg.windowTitle()
-        or "Episode 03" in dlg.findChild(EpisodeDetailPanel.QLabel, "").text()
-    )  # type: ignore[arg-type]
+        or "Episode 03" in dlg.findChild(QLabel).text()
+    )
     assert dlg.get_selected_language() == "vi"
 
     # Select Korean

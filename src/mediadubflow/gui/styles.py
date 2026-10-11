@@ -111,8 +111,17 @@ QPushButton#primaryButton:pressed, QPushButton[primary="true"]:pressed {{
     background-color: {COLOR_PRIMARY_PRESSED};
 }}
 
+/* Mini Step / Increment Buttons (+ / −) */
+QPushButton[stepBtn="true"] {{
+    padding: 0px;
+    font-size: 14px;
+    font-weight: 700;
+    text-align: center;
+}}
+
+
 /* Text Inputs */
-QLineEdit, QTextEdit, QPlainTextEdit {{
+QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox {{
     background-color: {COLOR_SURFACE};
     color: {COLOR_TEXT_PRIMARY};
     border: 1px solid {COLOR_BORDER_INPUT};
@@ -120,12 +129,64 @@ QLineEdit, QTextEdit, QPlainTextEdit {{
     padding: 6px 10px;
 }}
 
-QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {{
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QSpinBox:focus {{
     border: 1px solid {COLOR_BORDER_FOCUS};
 }}
 
+
 QLineEdit[hasError="true"] {{
     border: 1px solid {COLOR_ERROR};
+}}
+
+/* Combo Boxes */
+QComboBox {{
+    background-color: {COLOR_SURFACE};
+    color: {COLOR_TEXT_PRIMARY};
+    border: 1px solid {COLOR_BORDER_INPUT};
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 13px;
+    min-height: 20px;
+}}
+
+QComboBox:hover {{
+    border: 1px solid #94a3b8;
+}}
+
+QComboBox:focus {{
+    border: 1px solid {COLOR_BORDER_FOCUS};
+}}
+
+QComboBox::drop-down {{
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 26px;
+    border-left: 1px solid {COLOR_BORDER};
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+}}
+
+QComboBox QAbstractItemView {{
+    background-color: {COLOR_SURFACE};
+    color: {COLOR_TEXT_PRIMARY};
+    border: 1px solid {COLOR_BORDER_INPUT};
+    border-radius: 4px;
+    selection-background-color: #eff6ff;
+    selection-color: {COLOR_TEXT_PRIMARY};
+    padding: 4px;
+    outline: none;
+}}
+
+QComboBox QAbstractItemView::item {{
+    min-height: 32px;
+    padding: 6px 10px;
+    font-size: 13px;
+}}
+
+QComboBox QAbstractItemView::item:selected {{
+    background-color: #eff6ff;
+    color: {COLOR_PRIMARY};
+    font-weight: 600;
 }}
 
 /* Tables */
@@ -290,6 +351,12 @@ QHeaderView::section {{
     padding: 8px;
     border: none;
     border-bottom: 1px solid {COLOR_BORDER};
+    border-right: 1px solid {COLOR_BORDER};
+}}
+
+QHeaderView::section:hover {{
+    background-color: #f1f5f9;
+    color: {COLOR_TEXT_PRIMARY};
 }}
 
 /* Status Bar */

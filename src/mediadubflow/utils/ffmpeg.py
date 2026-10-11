@@ -159,3 +159,165 @@ async def extract_audio_track(
     ]
 
     return await run_ffmpeg(args, timeout=timeout)
+
+
+async def concatenate_videos(
+    video_paths: list[Path],
+    output_path: Path,
+    *,
+    timeout: float = 1800.0,
+) -> tuple[int, str, str]:
+    """
+    Concatenate multiple video files into a single output video (.mp4).
+
+    First attempts fast stream-copy via FFmpeg concat demuxer (-c copy).
+    If stream copy fails (e.g. slight audio sample rate or codec variance),
+    automatically falls back to re-encoding concat (-c:v libx264 -c:a aac).
+
+    Args:
+        video_paths: Ordered list of input video paths.
+        output_path: Target merged output video path (.mp4).
+        timeout: Maximum seconds to allow FFmpeg to execute (default 1800s).
+
+    Returns:
+        Tuple of (returncode, stdout, stderr).
+    """
+    if not video_paths:
+        return 1, "", "No video files provided for concatenation"
+
+    output_path = Path(output_path).resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if len(video_paths) == 1:
+        single = Path(video_paths[0]).resolve()
+        if not single.exists() or single.stat().st_size == 0:
+            return 1, "", f"Input video does not exist: {single}"
+        try:
+            shutil.copy2(single, output_path)
+            return 0, f"Copied single video to {output_path}", ""
+        except Exception as exc:
+            return 1, "", f"Failed to copy video: {exc}"
+
+    import uuid
+
+    temp_manifest = output_path.parent / f".concat_manifest_{uuid.uuid4().hex[:8]}.txt"
+    temp_output = output_path.parent / f".temp_concat_out_{uuid.uuid4().hex[:8]}.mp4"
+
+    try:
+        # Write concat demuxer manifest file
+        lines = []
+        for vp in video_paths:
+            resolved_p = Path(vp).resolve()
+            safe_str = resolved_p.as_posix().replace("'", "'\\''")
+            lines.append(f"file '{safe_str}'\n")
+        temp_manifest.write_text("".join(lines), encoding="utf-8")
+
+        # 1. Attempt fast stream copy
+        args_copy = [
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(temp_manifest),
+            "-c",
+            "copy",
+            str(temp_output),
+        ]
+        code, stdout, stderr = await run_ffmpeg(args_copy, timeout=timeout)
+        if code == 0 and temp_output.exists() and temp_output.stat().st_size > 0:
+            shutil.move(str(temp_output), str(output_path))
+            return 0, stdout, stderr
+
+        # 2. Fallback to re-encoding concat demuxer if stream copy fails
+        logger.warning(
+            "Fast stream-copy concatenation failed (code={}); falling back to re-encoding concat...",
+            code,
+        )
+        if temp_output.exists():
+            try:
+                temp_output.unlink()
+            except OSError:
+                pass
+
+        args_reencode = [
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(temp_manifest),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "22",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            str(temp_output),
+        ]
+        code, stdout, stderr = await run_ffmpeg(args_reencode, timeout=timeout)
+        if code == 0 and temp_output.exists() and temp_output.stat().st_size > 0:
+            shutil.move(str(temp_output), str(output_path))
+            return 0, stdout, stderr
+
+        # 3. Final fallback: filter_complex concat
+        logger.warning(
+            "Re-encoding concat demuxer failed (code={}); falling back to filter_complex concat...",
+            code,
+        )
+        if temp_output.exists():
+            try:
+                temp_output.unlink()
+            except OSError:
+                pass
+
+        filter_args = ["-y"]
+        for vp in video_paths:
+            filter_args.extend(["-i", str(Path(vp).resolve())])
+        filter_spec = (
+            "".join(f"[{i}:v:0][{i}:a:0]" for i in range(len(video_paths)))
+            + f"concat=n={len(video_paths)}:v=1:a=1[outv][outa]"
+        )
+        filter_args.extend([
+            "-filter_complex",
+            filter_spec,
+            "-map",
+            "[outv]",
+            "-map",
+            "[outa]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "22",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            str(temp_output),
+        ])
+        code, stdout, stderr = await run_ffmpeg(filter_args, timeout=timeout)
+        if code == 0 and temp_output.exists() and temp_output.stat().st_size > 0:
+            shutil.move(str(temp_output), str(output_path))
+            return 0, stdout, stderr
+
+        return code, stdout, stderr
+    finally:
+        if temp_manifest.exists():
+            try:
+                temp_manifest.unlink()
+            except OSError:
+                pass
+        if temp_output.exists():
+            try:
+                temp_output.unlink()
+            except OSError:
+                pass
+

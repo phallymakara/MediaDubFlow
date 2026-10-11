@@ -18,6 +18,7 @@ def test_home_screen_empty_state(qtbot) -> None:
     mock_bridge = MagicMock()
     screen = HomeScreen(bridge=mock_bridge)
     qtbot.addWidget(screen)
+    screen.show()
 
     assert screen._btn_new.text() == "+ New Project"
     assert screen._search_input.placeholderText() == "Search recent projects..."
@@ -35,6 +36,7 @@ def test_home_screen_new_project_signal(qtbot) -> None:
     mock_bridge = MagicMock()
     screen = HomeScreen(bridge=mock_bridge)
     qtbot.addWidget(screen)
+    screen.show()
 
     with qtbot.waitSignal(screen.new_project_requested, timeout=2000):
         screen._btn_new.click()
@@ -45,6 +47,7 @@ def test_home_screen_search_filtering(qtbot) -> None:
     mock_bridge = MagicMock()
     screen = HomeScreen(bridge=mock_bridge)
     qtbot.addWidget(screen)
+    screen.show()
 
     p1 = Project(
         id=1,
@@ -157,6 +160,7 @@ def test_edit_project_dialog_validation_and_values(qtbot) -> None:
 
     dlg = EditProjectDialog(project=p)
     qtbot.addWidget(dlg)
+    dlg.show()
 
     assert dlg._txt_name.text() == "Original Title"
     assert dlg._txt_source.text() == "/videos/orig"

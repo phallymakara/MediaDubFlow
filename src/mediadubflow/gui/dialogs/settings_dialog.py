@@ -201,7 +201,6 @@ class SettingsDialog(QDialog):
 
         # Mute Original Speaker Checkbox
         self._chk_mute_original = QCheckBox("Mute Original Voice (Silences original speaker during dialogue, keeps background sound)")
-        self._chk_mute_original.setWordWrap(True)
         self._chk_mute_original.setStyleSheet("font-weight: 600; font-size: 13px; color: #0f172a;")
         general_form_layout.addRow("", self._chk_mute_original)
 
@@ -384,7 +383,10 @@ class SettingsDialog(QDialog):
         openai_model = self._clean_val(self._txt_openai_model.text()) or "gpt-4o"
         openai_base_url = self._clean_val(self._txt_openai_base_url.text())
 
-        azure_endpoint = self._clean_val(self._txt_azure_endpoint.text())
+        azure_endpoint = self._clean_val(self._txt_azure_endpoint.text()).rstrip("/")
+        for suffix in ("/openai/v1", "/openai"):
+            if azure_endpoint.endswith(suffix):
+                azure_endpoint = azure_endpoint[: -len(suffix)].rstrip("/")
         azure_key = self._clean_val(self._txt_azure_key.text())
         azure_deployment = self._clean_val(self._txt_azure_deployment.text()) or "gpt-4o"
         azure_version = self._clean_val(self._txt_azure_version.text()) or "2024-08-01-preview"

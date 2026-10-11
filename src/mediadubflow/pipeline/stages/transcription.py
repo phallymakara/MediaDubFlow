@@ -36,33 +36,72 @@ def _transcribe_audio_sync(
         str(audio_path),
         language=lang_param,
         word_timestamps=True,
-        vad_filter=True,
+        vad_filter=False,
     )
 
     serialized_segments: list[dict[str, Any]] = []
+    seg_idx = 1
 
     for seg in segments_gen:
-        words_list: list[dict[str, Any]] = []
-        if seg.words:
-            for w in seg.words:
-                words_list.append(
-                    {
-                        "word": w.word,
-                        "start": round(float(w.start), 3),
-                        "end": round(float(w.end), 3),
-                        "probability": round(float(w.probability), 3),
-                    }
-                )
+        # Skip pure silence or high no-speech probability
+        if getattr(seg, "no_speech_prob", 0.0) > 0.75 or not seg.text.strip():
+            continue
 
-        serialized_segments.append(
-            {
-                "id": seg.id,
-                "start": round(float(seg.start), 3),
-                "end": round(float(seg.end), 3),
-                "text": seg.text.strip(),
-                "words": words_list,
-            }
-        )
+        words = seg.words or []
+        if not words:
+            serialized_segments.append(
+                {
+                    "id": seg_idx,
+                    "start": round(float(seg.start), 3),
+                    "end": round(float(seg.end), 3),
+                    "text": seg.text.strip(),
+                    "words": [],
+                }
+            )
+            seg_idx += 1
+            continue
+
+        # Split on pauses (> 1.2s gap between words) so we do not create giant merged segments
+        clusters: list[list[Any]] = []
+        cur_cluster: list[Any] = [words[0]]
+        for w in words[1:]:
+            gap = float(w.start) - float(cur_cluster[-1].end)
+            if gap > 1.2:
+                clusters.append(cur_cluster)
+                cur_cluster = [w]
+            else:
+                cur_cluster.append(w)
+        if cur_cluster:
+            clusters.append(cur_cluster)
+
+        for cl in clusters:
+            if len(clusters) == 1:
+                txt = seg.text.strip()
+            else:
+                raw_words = [str(getattr(w, "word", "")).strip() for w in cl if str(getattr(w, "word", "")).strip()]
+                has_cjk = any("\u4e00" <= ch <= "\u9fff" for w in raw_words for ch in w)
+                txt = "".join(raw_words) if has_cjk else " ".join(raw_words)
+            if not txt:
+                continue
+            words_list = [
+                {
+                    "word": w.word,
+                    "start": round(float(w.start), 3),
+                    "end": round(float(w.end), 3),
+                    "probability": round(float(getattr(w, "probability", 1.0)), 3),
+                }
+                for w in cl
+            ]
+            serialized_segments.append(
+                {
+                    "id": seg_idx,
+                    "start": round(float(cl[0].start), 3),
+                    "end": round(float(cl[-1].end), 3),
+                    "text": txt,
+                    "words": words_list,
+                }
+            )
+            seg_idx += 1
 
     output_json_path.parent.mkdir(parents=True, exist_ok=True)
     with output_json_path.open("w", encoding="utf-8") as f:

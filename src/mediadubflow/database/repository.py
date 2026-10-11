@@ -303,6 +303,7 @@ async def update_episode_checkpoint(
         "tts_audio_path",
         "mixed_audio_path",
         "output_video_path",
+        "title",
     }
     if field not in allowed_fields:
         raise ValueError(
