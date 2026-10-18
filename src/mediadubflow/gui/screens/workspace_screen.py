@@ -681,9 +681,14 @@ class WorkspaceScreen(QWidget):
             btn.setText("Start")
             btn.setStyleSheet("")
             btn.clicked.connect(lambda _, ep_id=ep.id: self._enqueue_episode(ep_id))
-        else:
+        elif hasattr(self._job_manager, "is_active_or_queued") and self._job_manager.is_active_or_queued(ep.id) is True:
             btn.setText("Active")
             btn.setEnabled(False)
+        else:
+            btn.setText("Start")
+            btn.setStyleSheet("")
+            btn.setEnabled(True)
+            btn.clicked.connect(lambda _, ep_id=ep.id: self._enqueue_episode(ep_id))
 
     @staticmethod
     def _status_to_stage_name(status: EpisodeStatus) -> str:
@@ -726,14 +731,21 @@ class WorkspaceScreen(QWidget):
         self._log_activity(f"Episode #{episode_id} enqueued for processing.")
 
     def _on_start_all_clicked(self) -> None:
-        """Enqueue all pending or failed episodes into JobManager."""
+        """Enqueue all pending, failed, or unfinished episodes into JobManager."""
         mode = self._cmb_workflow_mode.currentData()
         if mode:
             settings.output_mode = mode
 
         count = 0
         for ep in self._episodes:
-            if ep.status in (EpisodeStatus.PENDING, EpisodeStatus.FAILED):
+            if ep.status == EpisodeStatus.DONE:
+                continue
+            is_active = (
+                self._job_manager.is_active_or_queued(ep.id) is True
+                if hasattr(self._job_manager, "is_active_or_queued")
+                else False
+            )
+            if not is_active:
                 self._enqueue_episode(ep.id)
                 count += 1
         self._log_activity(f"Started queue: {count} episode(s) added.")

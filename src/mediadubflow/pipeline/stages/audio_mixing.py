@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from loguru import logger
 
@@ -68,9 +69,8 @@ class AudioMixingStage(PipelineStage):
                 )
                 if not success:
                     # Fallback to FFmpeg if waveform mixer encountered an issue
-                    logger.warning("[Episode {}] Falling back to FFmpeg mixing", ctx.episode_id)
                     if settings.mute_original_speaker:
-                        # Output clean TTS dialogue track without leaking original speech
+                        # When mute_speaker is True: 100% complete silence of original voice, output clean TTS dialogue
                         args = [
                             "-y",
                             "-i",
@@ -83,7 +83,7 @@ class AudioMixingStage(PipelineStage):
                         ]
                     else:
                         filter_complex = (
-                            f"[0:a]volume={bg_vol:.2f}[bg];[1:a]volume={tts_vol:.2f}[vox];"
+                            f"[0:a]volume={bg_vol * 0.35:.2f}[bg];[1:a]volume={tts_vol:.2f}[vox];"
                             "[bg][vox]amix=inputs=2:duration=first:dropout_transition=2[out]"
                         )
                         args = [
@@ -166,28 +166,32 @@ class AudioMixingStage(PipelineStage):
         """
         import json
         import wave
+
         import numpy as np
 
         try:
-            # 1. Collect all speech segments from translation and transcript sources
-            raw_segments: list[dict[str, Any]] = []
-            segment_sources = [
-                ctx.translation_path,
-                ctx.transcript_path,
-                ctx.work_dir / f"translation_{ctx.episode_id}.json",
-                ctx.work_dir / f"transcript_{ctx.episode_id}.json",
-            ]
-            seen_sources: set[str] = set()
-            for src in segment_sources:
-                if src and src.exists() and str(src) not in seen_sources:
-                    seen_sources.add(str(src))
-                    try:
-                        with src.open("r", encoding="utf-8") as f:
-                            raw = json.load(f)
-                            if isinstance(raw, list):
-                                raw_segments.extend(raw)
-                    except Exception as exc:
-                        logger.debug("[Episode {}] Could not read segments from {}: {}", ctx.episode_id, src, exc)
+            # 1. Collect speech segments from translation and transcript sources
+            translation_segments: list[dict[str, Any]] = []
+            trans_src = ctx.translation_path or (ctx.work_dir / f"translation_{ctx.episode_id}.json")
+            if trans_src and trans_src.exists():
+                try:
+                    with trans_src.open("r", encoding="utf-8") as f:
+                        raw = json.load(f)
+                        if isinstance(raw, list):
+                            translation_segments = raw
+                except Exception as exc:
+                    logger.debug("[Episode {}] Could not read translation segments: {}", ctx.episode_id, exc)
+
+            transcript_segments: list[dict[str, Any]] = []
+            tr_src = ctx.transcript_path or (ctx.work_dir / f"transcript_{ctx.episode_id}.json")
+            if tr_src and tr_src.exists():
+                try:
+                    with tr_src.open("r", encoding="utf-8") as f:
+                        raw = json.load(f)
+                        if isinstance(raw, list):
+                            transcript_segments = raw
+                except Exception as exc:
+                    logger.debug("[Episode {}] Could not read transcript segments: {}", ctx.episode_id, exc)
 
             # 2. Read background audio
             with wave.open(str(bg_path), "rb") as w_bg:
@@ -231,94 +235,112 @@ class AudioMixingStage(PipelineStage):
             elif tts_ch > 1 and bg_ch == 1:
                 tts_samples = np.mean(tts_samples, axis=1)
 
-            # 4. Build muting/ducking time intervals with precise safety margins
-            intervals: list[tuple[float, float]] = []
-            pre_roll_sec = 0.12
-            post_roll_sec = 0.18
-
-            # Inspect TTS chunk lengths if available in work_dir / "tts_chunks"
-            chunks_dir = ctx.work_dir / "tts_chunks"
-            chunk_durations: dict[int, float] = {}
-            if chunks_dir.exists():
-                for idx, chunk_file in enumerate(sorted(chunks_dir.glob("chunk_*.wav"))):
-                    try:
-                        with wave.open(str(chunk_file), "rb") as cw:
-                            chunk_durations[idx] = cw.getnframes() / float(cw.getframerate())
-                    except Exception:
-                        pass
-
-            for idx, seg in enumerate(raw_segments):
-                s_sec = max(0.0, float(seg.get("start", 0.0)))
-                e_sec = max(s_sec, float(seg.get("end", s_sec + 0.3)))
-
-                chunk_dur = chunk_durations.get(idx, 0.0)
-                coverage_end = max(e_sec, s_sec + chunk_dur)
-                s_mute = max(0.0, s_sec - pre_roll_sec)
-                e_mute = coverage_end + post_roll_sec
-                intervals.append((s_mute, e_mute))
-
-            # Also detect active energy in the TTS audio track itself as a failsafe
+            # 4. Check whether TTS audio actually contains dialogue
             tts_abs = np.abs(tts_samples)
             if bg_ch > 1 and tts_abs.ndim > 1:
                 tts_abs = np.max(tts_abs, axis=1)
-            active_tts_mask = tts_abs > 100.0
-            if np.any(active_tts_mask):
-                active_indices = np.where(active_tts_mask)[0]
-                diffs = np.diff(active_indices)
-                split_points = np.where(diffs > int(0.25 * bg_sr))[0] + 1
-                chunks = np.split(active_indices, split_points)
-                for chk in chunks:
-                    if len(chk) > 0:
-                        s_t = max(0.0, (chk[0] / bg_sr) - 0.12)
-                        e_t = (chk[-1] / bg_sr) + 0.18
-                        intervals.append((s_t, e_t))
+            has_tts_audio = bool(len(tts_abs) > 0 and np.max(tts_abs) > 50.0)
 
-            # 5. Merge contiguous and nearby intervals (within 0.35s) so dialogue pauses let background breathe
-            merged_intervals: list[tuple[float, float]] = []
-            if intervals:
-                intervals.sort(key=lambda x: x[0])
-                merged_intervals.append(intervals[0])
-                merge_gap = 0.35
-                for cur_s, cur_e in intervals[1:]:
-                    prev_s, prev_e = merged_intervals[-1]
-                    if cur_s <= prev_e + merge_gap:
-                        merged_intervals[-1] = (prev_s, max(prev_e, cur_e))
-                    else:
-                        merged_intervals.append((cur_s, cur_e))
+            if not has_tts_audio:
+                logger.warning(
+                    "[Episode {}] TTS audio track has no energy (silent). Background audio will play continuously across the full timeline.",
+                    ctx.episode_id,
+                )
+                gain = np.ones(frames_count, dtype=np.float32)
+                merged_intervals: list[tuple[float, float]] = []
+            else:
+                # 5. Build dialogue mute/duck intervals
+                # When mute_speaker is True: use 150ms pre-roll and 200ms post-roll so zero syllable leaks
+                pre_roll_sec = 0.15 if mute_speaker else 0.06
+                post_roll_sec = 0.20 if mute_speaker else 0.08
+                merge_gap = 0.40 if mute_speaker else 0.15
 
-            # 6. Generate smooth raised-cosine (Hann) gain envelope
-            gain = np.ones(frames_count, dtype=np.float32)
-            target_gain = 0.0 if mute_speaker else 0.20
-            fade_out_samples = int(0.08 * bg_sr)  # 80ms fade out before speech start
-            fade_in_samples = int(0.10 * bg_sr)   # 100ms fade in after speech end
+                # Inspect TTS chunk lengths from work_dir / "tts_chunks"
+                chunks_dir = ctx.work_dir / "tts_chunks"
+                chunk_durations: dict[int, float] = {}
+                if chunks_dir.exists():
+                    for idx, chunk_file in enumerate(sorted(chunks_dir.glob("chunk_*.wav"))):
+                        try:
+                            with wave.open(str(chunk_file), "rb") as cw:
+                                chunk_durations[idx] = cw.getnframes() / float(cw.getframerate())
+                        except Exception:
+                            pass
 
-            for s_sec, e_sec in merged_intervals:
-                s_idx = max(0, min(frames_count, int(s_sec * bg_sr)))
-                e_idx = max(s_idx, min(frames_count, int(e_sec * bg_sr)))
-                if s_idx >= frames_count:
-                    continue
+                intervals: list[tuple[float, float]] = []
 
-                # Smooth Hann curve fade out before dialogue
-                fo_start = max(0, min(frames_count, s_idx - fade_out_samples))
-                fo_slice = gain[fo_start:s_idx]
-                if len(fo_slice) > 0:
-                    t_fo = np.linspace(0.0, np.pi, len(fo_slice), endpoint=False)
-                    curve_fo = target_gain + (1.0 - target_gain) * 0.5 * (1.0 + np.cos(t_fo))
-                    gain[fo_start:s_idx] = np.minimum(fo_slice, curve_fo)
+                # Translation segments with TTS duration expansion
+                for idx, seg in enumerate(translation_segments):
+                    s_sec = max(0.0, float(seg.get("start", 0.0)))
+                    e_sec = max(s_sec, float(seg.get("end", s_sec + 0.3)))
+                    chunk_dur = chunk_durations.get(idx, 0.0)
+                    coverage_end = max(e_sec, s_sec + chunk_dur)
+                    intervals.append((max(0.0, s_sec - pre_roll_sec), coverage_end + post_roll_sec))
 
-                # Core dialogue window: 100% silence when mute_speaker is True
-                if e_idx > s_idx:
-                    gain[s_idx:e_idx] = target_gain
+                # Transcript segments (covers any un-translated spoken dialogue or chatter)
+                for seg in transcript_segments:
+                    s_sec = max(0.0, float(seg.get("start", 0.0)))
+                    e_sec = max(s_sec, float(seg.get("end", s_sec + 0.3)))
+                    intervals.append((max(0.0, s_sec - pre_roll_sec), e_sec + post_roll_sec))
 
-                # Smooth Hann curve fade in after dialogue
-                fi_end = max(e_idx, min(frames_count, e_idx + fade_in_samples))
-                fi_slice = gain[e_idx:fi_end]
-                if len(fi_slice) > 0:
-                    t_fi = np.linspace(np.pi, 0.0, len(fi_slice), endpoint=False)
-                    curve_fi = target_gain + (1.0 - target_gain) * 0.5 * (1.0 + np.cos(t_fi))
-                    gain[e_idx:fi_end] = np.minimum(fi_slice, curve_fi)
+                # Active TTS waveform energy regions
+                active_tts_mask = tts_abs > 50.0
+                if np.any(active_tts_mask):
+                    active_indices = np.where(active_tts_mask)[0]
+                    diffs = np.diff(active_indices)
+                    split_points = np.where(diffs > int(0.25 * bg_sr))[0] + 1
+                    chunks = np.split(active_indices, split_points)
+                    for chk in chunks:
+                        if len(chk) > 0:
+                            s_t = max(0.0, (chk[0] / bg_sr) - pre_roll_sec)
+                            e_t = (chk[-1] / bg_sr) + post_roll_sec
+                            intervals.append((s_t, e_t))
 
-            # 7. Apply gain envelope and background volume
+                # Merge contiguous or overlapping intervals
+                merged_intervals = []
+                if intervals:
+                    intervals.sort(key=lambda x: x[0])
+                    merged_intervals.append(intervals[0])
+                    for cur_s, cur_e in intervals[1:]:
+                        prev_s, prev_e = merged_intervals[-1]
+                        if cur_s <= prev_e + merge_gap:
+                            merged_intervals[-1] = (prev_s, max(prev_e, cur_e))
+                        else:
+                            merged_intervals.append((cur_s, cur_e))
+
+                # 6. Generate smooth raised-cosine (Hann) gain envelope
+                # When mute_speaker is True: target_gain = 0.0 (100% complete silence of original voice)
+                gain = np.ones(frames_count, dtype=np.float32)
+                target_gain = 0.0 if mute_speaker else 0.35
+                fade_out_samples = int(0.04 * bg_sr)  # 40ms fade down to zero before speech start
+                fade_in_samples = int(0.08 * bg_sr)   # 80ms fade up to normal after speech end
+
+                for s_sec, e_sec in merged_intervals:
+                    s_idx = max(0, min(frames_count, int(s_sec * bg_sr)))
+                    e_idx = max(s_idx, min(frames_count, int(e_sec * bg_sr)))
+                    if s_idx >= frames_count:
+                        continue
+
+                    # Smooth Hann fade out BEFORE dialogue begins
+                    fo_start = max(0, min(frames_count, s_idx - fade_out_samples))
+                    fo_slice = gain[fo_start:s_idx]
+                    if len(fo_slice) > 0:
+                        t_fo = np.linspace(0.0, np.pi, len(fo_slice), endpoint=False)
+                        curve_fo = target_gain + (1.0 - target_gain) * 0.5 * (1.0 + np.cos(t_fo))
+                        gain[fo_start:s_idx] = np.minimum(fo_slice, curve_fo)
+
+                    # Dialogue window: 100% completely muted (gain=0.0) for original speaker
+                    if e_idx > s_idx:
+                        gain[s_idx:e_idx] = target_gain
+
+                    # Smooth Hann fade in AFTER dialogue ends
+                    fi_end = max(e_idx, min(frames_count, e_idx + fade_in_samples))
+                    fi_slice = gain[e_idx:fi_end]
+                    if len(fi_slice) > 0:
+                        t_fi = np.linspace(np.pi, 0.0, len(fi_slice), endpoint=False)
+                        curve_fi = target_gain + (1.0 - target_gain) * 0.5 * (1.0 + np.cos(t_fi))
+                        gain[e_idx:fi_end] = np.minimum(fi_slice, curve_fi)
+
+            # 7. Apply gain envelope and background volume (continuous throughout entire video)
             if bg_ch > 1:
                 ducked_bg = bg_samples * gain[:, np.newaxis] * bg_vol
             else:

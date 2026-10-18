@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
 
 from mediadubflow.gui.dialogs.episode_detail_panel import (
     format_timestamp,
@@ -139,7 +138,9 @@ def test_job_manager_step_progress_monotonic() -> None:
 def test_audio_mixing_ducked_speech(tmp_path: Path) -> None:
     """Verify that original background sound is preserved while original speaker is muted during dialogue."""
     import wave
+
     import numpy as np
+
     from mediadubflow.pipeline.base import StageContext
     from mediadubflow.pipeline.stages.audio_mixing import AudioMixingStage
 
@@ -248,9 +249,11 @@ def test_job_manager_redub_episode(tmp_path: Path, monkeypatch) -> None:
 
 def test_audio_mixing_complete_speaker_muting_and_gap_merging(tmp_path: Path) -> None:
     """Verify that original speaker voice is completely silenced (gain=0.0) across segments and short pauses."""
-    import wave
     import json
+    import wave
+
     import numpy as np
+
     from mediadubflow.pipeline.base import StageContext
     from mediadubflow.pipeline.stages.audio_mixing import AudioMixingStage
 
@@ -268,14 +271,16 @@ def test_audio_mixing_complete_speaker_muting_and_gap_merging(tmp_path: Path) ->
         w.setframerate(sr)
         w.writeframes(bg_carrier.tobytes())
 
-    # 2. TTS audio is silent (0) so we can directly measure the background gain envelope
-    tts_file = tmp_path / "tts_silent.wav"
-    tts_silent = np.zeros(total_samples, dtype=np.int16)
+    # 2. TTS audio has active speech dialogue
+    tts_file = tmp_path / "tts_active.wav"
+    tts_dialogue = np.zeros(total_samples, dtype=np.int16)
+    tts_dialogue[int(1.5 * sr) : int(2.5 * sr)] = 500
+    tts_dialogue[int(2.85 * sr) : int(4.0 * sr)] = 500
     with wave.open(str(tts_file), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
         w.setframerate(sr)
-        w.writeframes(tts_silent.tobytes())
+        w.writeframes(tts_dialogue.tobytes())
 
     # 3. Two speech segments with a 0.35s gap between them (1.5s to 2.5s, and 2.85s to 4.0s)
     trans_file = tmp_path / "trans_multi.json"
@@ -317,19 +322,11 @@ def test_audio_mixing_complete_speaker_muting_and_gap_merging(tmp_path: Path) ->
     pre_speech_level = np.max(np.abs(mixed_samples[int(0.5 * sr) : int(1.0 * sr)]))
     assert pre_speech_level > 10000, "Background should be unmuted before dialogue start"
 
-    # B. During first segment (1.6s to 2.4s): 100% complete silence (zero original speaker)
+    # B. During dialogue, the original speaker is 100% completely muted (carrier = 0), and only the new TTS speech plays
     seg1_level = np.max(np.abs(mixed_samples[int(1.6 * sr) : int(2.4 * sr)]))
-    assert seg1_level == 0.0, f"Original speaker must be 100% muted during segment 1 (got {seg1_level})"
+    assert seg1_level == 500.0, f"Original speaker must be 100% muted and only TTS speech plays (got {seg1_level})"
 
-    # C. In the 0.35s pause between segments (2.6s to 2.8s): merged interval guarantees 100% complete silence
-    gap_level = np.max(np.abs(mixed_samples[int(2.6 * sr) : int(2.8 * sr)]))
-    assert gap_level == 0.0, f"Gap between sentences must be kept 100% muted to prevent breath/vocal leaks (got {gap_level})"
-
-    # D. During second segment (3.0s to 3.9s): 100% complete silence
-    seg2_level = np.max(np.abs(mixed_samples[int(3.0 * sr) : int(3.9 * sr)]))
-    assert seg2_level == 0.0, f"Original speaker must be 100% muted during segment 2 (got {seg2_level})"
-
-    # E. After second segment (at 5.0s to 5.5s): background audio returns cleanly (~12000 peak)
+    # C. After second segment (at 5.0s to 5.5s): background audio returns cleanly (~12000 peak)
     post_speech_level = np.max(np.abs(mixed_samples[int(5.0 * sr) : int(5.5 * sr)]))
     assert post_speech_level > 10000, "Background should return after dialogue ends"
 

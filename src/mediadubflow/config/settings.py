@@ -116,8 +116,8 @@ class Settings(BaseSettings):
     # --- TTS ---
     tts_backend: TTSBackend = Field(default=TTSBackend.EDGE_TTS)
     tts_voice: str = Field(
-        default="km-KH-PisethNeural",
-        description="Khmer TTS voice name (e.g. km-KH-PisethNeural or km-KH-SreymomNeural)",
+        default="auto",
+        description="Khmer TTS voice name (e.g. auto, km-KH-PisethNeural, or km-KH-SreymomNeural)",
     )
     tts_model: str = Field(
         default="tts_models/km/fairseq/vits",
@@ -137,7 +137,7 @@ class Settings(BaseSettings):
     )
     mute_original_speaker: bool = Field(
         default=True,
-        description="Whether to mute the original speaker voice in the dubbed video",
+        description="Whether to completely mute original speaker voice during dialogue (100% muted, TTS plays the speech)",
     )
     original_audio_volume: float = Field(
         default=0.8,
@@ -166,6 +166,10 @@ class Settings(BaseSettings):
     device: str = Field(
         default="auto",
         description="Processing device: auto | cpu | cuda | mps",
+    )
+    prevent_sleep: bool = Field(
+        default=True,
+        description="Prevent system and display sleep while MediaDubFlow is running",
     )
 
     # --- Paths ---

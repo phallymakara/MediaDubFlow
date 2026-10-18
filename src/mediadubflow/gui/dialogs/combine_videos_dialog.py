@@ -242,11 +242,12 @@ class CombineVideosDialog(QDialog):
         lbl_dest = QLabel("Destination:")
         lbl_dest.setStyleSheet("font-size: 12px; font-weight: 600; color: #475569;")
 
-        dest_folder = (
+        base_folder = (
             Path(self._project.output_folder).resolve()
             if self._project.output_folder
             else settings.output_root
         )
+        dest_folder = base_folder / "combined"
         self._txt_dest = QLineEdit(str(dest_folder))
         self._txt_dest.textChanged.connect(self._refresh_plan)
 
@@ -505,9 +506,10 @@ class CombineVideosDialog(QDialog):
                 )
 
                 # Update UI status via bridge callback
-                self._bridge.post_event(
-                    lambda i=idx, b=batch: self._update_batch_progress(i, total_batches, b.output_filename)
-                )
+                if hasattr(self._bridge, "post_event"):
+                    self._bridge.post_event(
+                        lambda i=idx, b=batch: self._update_batch_progress(i, total_batches, b.output_filename)
+                    )
 
                 code, _, stderr = await concatenate_videos(batch.input_paths, out_path)
                 if code == 0 and out_path.exists() and out_path.stat().st_size > 0:
@@ -517,7 +519,8 @@ class CombineVideosDialog(QDialog):
                     errors.append(msg)
                     logger.error(msg)
 
-                self._bridge.post_event(lambda i=idx: self._progress_bar.setValue(i))
+                if hasattr(self._bridge, "post_event"):
+                    self._bridge.post_event(lambda i=idx: self._progress_bar.setValue(i))
 
             return succeeded_count, errors
 

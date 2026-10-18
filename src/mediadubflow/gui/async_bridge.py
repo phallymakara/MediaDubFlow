@@ -25,12 +25,14 @@ class AsyncBridge(QThread):
 
     result_ready = Signal(object, object)
     error_occurred = Signal(object, object)
+    callback_requested = Signal(object)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._loop: asyncio.AbstractEventLoop | None = None
         self.result_ready.connect(self._handle_result_on_main, Qt.ConnectionType.QueuedConnection)
         self.error_occurred.connect(self._handle_error_on_main, Qt.ConnectionType.QueuedConnection)
+        self.callback_requested.connect(self._handle_callback_on_main, Qt.ConnectionType.QueuedConnection)
         import threading
 
         self._started_event = threading.Event()
@@ -98,6 +100,21 @@ class AsyncBridge(QThread):
                     self.error_occurred.emit(exc, on_error)
 
         asyncio.run_coroutine_threadsafe(_wrapper(), self._loop)
+
+    def post_event(self, fn: Callable[[], Any]) -> None:
+        """
+        Execute an arbitrary function or UI update safely on the Qt main GUI thread.
+
+        Thread-safe: can be called from background worker threads or asyncio coroutines.
+        """
+        self.callback_requested.emit(fn)
+
+    def _handle_callback_on_main(self, fn: Callable[[], Any]) -> None:
+        """Invoked on the Qt main thread to deliver arbitrary callbacks."""
+        try:
+            fn()
+        except Exception as exc:
+            logger.exception("Error in AsyncBridge post_event callback: {}", exc)
 
     def _handle_result_on_main(self, result: Any, callback: Callable[[Any], None]) -> None:
         """Invoked on the Qt main thread to deliver the coroutine result."""

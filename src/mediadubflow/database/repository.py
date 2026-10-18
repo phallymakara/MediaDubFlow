@@ -270,6 +270,34 @@ async def update_episode_status(
     logger.debug("Episode id={} status -> {}", episode_id, status.value)
 
 
+async def reconcile_orphaned_episodes(session: AsyncSession) -> int:
+    """
+    Reset any episodes stuck in non-terminal active or queued states from an
+    unclean application shutdown or restart back to PENDING.
+    """
+    from sqlalchemy import update  # noqa: PLC0415
+
+    stmt = (
+        update(Episode)
+        .where(
+            Episode.status.notin_(
+                [
+                    EpisodeStatus.PENDING,
+                    EpisodeStatus.DONE,
+                    EpisodeStatus.REVIEW,
+                    EpisodeStatus.FAILED,
+                ]
+            )
+        )
+        .values(status=EpisodeStatus.PENDING, error_message=None)
+    )
+    result = await session.execute(stmt)
+    count = int(result.rowcount)
+    if count > 0:
+        logger.info("Reconciled {} orphaned/interrupted episode(s) to PENDING state", count)
+    return count
+
+
 async def update_episode_checkpoint(
     session: AsyncSession,
     episode_id: int,

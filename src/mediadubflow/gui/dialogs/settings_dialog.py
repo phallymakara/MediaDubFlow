@@ -194,13 +194,18 @@ class SettingsDialog(QDialog):
         self._spin_concurrency.setValue(2)
         general_form_layout.addRow("Concurrent Episodes:", self._spin_concurrency)
 
+        # Sleep Prevention
+        self._chk_prevent_sleep = QCheckBox("Prevent System Sleep (Screen sleeps normally, but tasks continue running in background)")
+        self._chk_prevent_sleep.setStyleSheet("font-weight: 600; font-size: 13px; color: #0f172a;")
+        general_form_layout.addRow("Background Processing:", self._chk_prevent_sleep)
+
         # TTS & Audio Dubbing Controls
         tts_header = QLabel("TTS Voice Dubbing & Audio Mixing")
         tts_header.setStyleSheet("font-size: 14px; font-weight: 700; color: #0f172a; margin-top: 14px;")
         general_form_layout.addRow(tts_header)
 
         # Mute Original Speaker Checkbox
-        self._chk_mute_original = QCheckBox("Mute Original Voice (Silences original speaker during dialogue, keeps background sound)")
+        self._chk_mute_original = QCheckBox("Mute Original Speaker Completely (100% muted during dialogue, new TTS voice plays the speech)")
         self._chk_mute_original.setStyleSheet("font-weight: 600; font-size: 13px; color: #0f172a;")
         general_form_layout.addRow("", self._chk_mute_original)
 
@@ -359,6 +364,8 @@ class SettingsDialog(QDialog):
         self._slider_speed.setValue(speed_val)
         self._lbl_speed_val.setText(f"{settings.tts_speed:.2f}x")
 
+        self._chk_prevent_sleep.setChecked(settings.prevent_sleep)
+
         self._on_provider_changed()
 
     def _on_provider_changed(self) -> None:
@@ -460,6 +467,7 @@ class SettingsDialog(QDialog):
             dotenv.set_key(str(env_path), "TTS_VOLUME", str(round(self._slider_volume.value() / 100.0, 2)))
             dotenv.set_key(str(env_path), "ORIGINAL_AUDIO_VOLUME", str(round(self._slider_bg_volume.value() / 100.0, 2)))
             dotenv.set_key(str(env_path), "MUTE_ORIGINAL_SPEAKER", "true" if self._chk_mute_original.isChecked() else "false")
+            dotenv.set_key(str(env_path), "PREVENT_SLEEP", "true" if self._chk_prevent_sleep.isChecked() else "false")
 
             # Update settings object
             settings.tts_voice = str(self._cmb_tts_voice.currentData())
@@ -467,6 +475,14 @@ class SettingsDialog(QDialog):
             settings.tts_volume = round(self._slider_volume.value() / 100.0, 2)
             settings.original_audio_volume = round(self._slider_bg_volume.value() / 100.0, 2)
             settings.mute_original_speaker = self._chk_mute_original.isChecked()
+            settings.prevent_sleep = self._chk_prevent_sleep.isChecked()
+
+            from mediadubflow.utils.sleep_inhibitor import sleep_inhibitor
+
+            if settings.prevent_sleep:
+                sleep_inhibitor.acquire("Settings dialog updated")
+            else:
+                sleep_inhibitor.release()
 
             logger.info("Settings saved to .env at {}", env_path)
         except Exception as exc:

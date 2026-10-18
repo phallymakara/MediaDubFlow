@@ -11,9 +11,15 @@ def main() -> None:
     setup_logging()
 
     # Apply any pending database migrations before the GUI starts.
-    from mediadubflow.database.session import run_db_migrations  # noqa: PLC0415
+    from mediadubflow.database.repository import reconcile_orphaned_episodes  # noqa: PLC0415
+    from mediadubflow.database.session import get_session, run_db_migrations  # noqa: PLC0415
 
-    asyncio.run(run_db_migrations())
+    async def _init_db() -> None:
+        await run_db_migrations()
+        async with get_session() as session:
+            await reconcile_orphaned_episodes(session)
+
+    asyncio.run(_init_db())
 
     # Validate settings and system environment at startup.
     from loguru import logger  # noqa: PLC0415
@@ -44,6 +50,13 @@ def main() -> None:
     if plugins_dir.exists() and "QT_QPA_PLATFORM_PLUGIN_PATH" not in os.environ:
         os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(plugins_dir)
 
+    # Ensure sleep prevention is activated if configured so the system doesn't sleep
+    # during long rendering, translation, or audio tasks while user is away.
+    from mediadubflow.utils.sleep_inhibitor import sleep_inhibitor  # noqa: PLC0415
+
+    if settings.prevent_sleep:
+        sleep_inhibitor.acquire("MediaDubFlow desktop application active")
+
     # Import Qt application only after migrations succeed so any startup
     # errors are captured in the log before the GUI appears.
     from PySide6.QtWidgets import QApplication  # noqa: PLC0415
@@ -53,6 +66,7 @@ def main() -> None:
     app = QApplication(sys.argv)
     app.setApplicationName("MediaDubFlow")
     app.setOrganizationName("Proseth Solutions")
+    app.aboutToQuit.connect(sleep_inhibitor.release)
 
     window = MediaDubFlowApp(validation_report=validation_report)
     window.show()

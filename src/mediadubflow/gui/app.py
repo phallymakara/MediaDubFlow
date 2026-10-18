@@ -215,6 +215,9 @@ class MediaDubFlowApp(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         """Ensure background jobs and thread shutdown cleanly."""
+        from mediadubflow.utils.sleep_inhibitor import sleep_inhibitor
+
+        sleep_inhibitor.release()
         kill_all_ffmpeg_processes()
         self._job_manager.stop(cancel_active=True)
         self._bridge.stop()

@@ -32,19 +32,37 @@ def _transcribe_audio_sync(
     # Pass language if specified, otherwise let Whisper auto-detect
     lang_param = source_language.strip() if (source_language and source_language.strip()) else None
 
+    # Enable Silero VAD and disable condition_on_previous_text to prevent YouTube hallucination loops
     segments_gen, info = model.transcribe(
         str(audio_path),
         language=lang_param,
         word_timestamps=True,
         vad_filter=False,
+        condition_on_previous_text=False,
     )
+
+    import re  # noqa: PLC0415
+
+    spam_patterns = [
+        re.compile(r"请不吝点赞|订阅\s*转发|打赏支持|明镜与点点", re.IGNORECASE),
+        re.compile(r"优优独播剧场|YoYo Television Series", re.IGNORECASE),
+        re.compile(r"欢迎订阅|感谢收看|记得点赞|关注微信公众号", re.IGNORECASE),
+    ]
+
+    def _is_hallucination(t: str) -> bool:
+        clean = t.strip()
+        return any(p.search(clean) for p in spam_patterns)
 
     serialized_segments: list[dict[str, Any]] = []
     seg_idx = 1
 
     for seg in segments_gen:
-        # Skip pure silence or high no-speech probability
-        if getattr(seg, "no_speech_prob", 0.0) > 0.75 or not seg.text.strip():
+        # Skip pure silence, high no-speech probability, or known YouTube hallucinations
+        if (
+            getattr(seg, "no_speech_prob", 0.0) > 0.85
+            or not seg.text.strip()
+            or _is_hallucination(seg.text)
+        ):
             continue
 
         words = seg.words or []
@@ -81,7 +99,7 @@ def _transcribe_audio_sync(
                 raw_words = [str(getattr(w, "word", "")).strip() for w in cl if str(getattr(w, "word", "")).strip()]
                 has_cjk = any("\u4e00" <= ch <= "\u9fff" for w in raw_words for ch in w)
                 txt = "".join(raw_words) if has_cjk else " ".join(raw_words)
-            if not txt:
+            if not txt or _is_hallucination(txt):
                 continue
             words_list = [
                 {

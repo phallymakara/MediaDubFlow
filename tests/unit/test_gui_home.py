@@ -181,3 +181,24 @@ def test_edit_project_dialog_validation_and_values(qtbot) -> None:
     assert updated["name"] == "Renamed Drama"
     assert updated["output_folder"] == "/output/custom"
     assert updated["target_language"] == "km"
+
+
+def test_async_bridge_post_event(qtbot) -> None:
+    """AsyncBridge.post_event safely marshals callback execution to main GUI thread."""
+    from mediadubflow.gui.async_bridge import AsyncBridge
+
+    bridge = AsyncBridge()
+    try:
+        bridge.start()
+        bridge.wait_until_ready()
+
+        executed = []
+
+        def _sample_cb():
+            executed.append("done")
+
+        bridge.post_event(_sample_cb)
+        qtbot.waitUntil(lambda: len(executed) == 1, timeout=2000)
+        assert executed == ["done"]
+    finally:
+        bridge.stop()

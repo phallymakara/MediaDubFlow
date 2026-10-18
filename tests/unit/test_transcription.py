@@ -209,6 +209,7 @@ def test_transcribe_audio_sync_helper(tmp_path: Path) -> None:
             language="zh",
             word_timestamps=True,
             vad_filter=False,
+            condition_on_previous_text=False,
         )
 
         with output_json.open("r", encoding="utf-8") as f:
