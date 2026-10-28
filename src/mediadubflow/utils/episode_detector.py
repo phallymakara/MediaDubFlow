@@ -19,9 +19,9 @@ VIDEO_EXTENSIONS: frozenset[str] = frozenset(
 
 # Regex patterns tried in order to extract episode number from filename.
 _EPISODE_PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"[Ee](?P<num>\d{1,4})"),  # E01, e12
-    re.compile(r"[Ee][Pp](?P<num>\d{1,4})"),  # EP01, ep12
-    re.compile(r"[Ss]\d+[Ee](?P<num>\d{1,4})"),  # S01E01
+    re.compile(r"[Ee][Pp]?[-_\s]*(?P<num>\d{1,4})"),  # E01, EP01, Ep_01, Ep-12, EP 05
+    re.compile(r"[Ss]\d+[-_\s]*[Ee][Pp]?[-_\s]*(?P<num>\d{1,4})"),  # S01E01, S01_Ep01
+    re.compile(r"(?:ភាគ|part)[-_\s]*(?P<num>\d{1,4})", re.IGNORECASE),  # ភាគ 01, Part 01
     re.compile(r"[-_\s](?P<num>\d{1,4})[-_\s.]"),  # -01-, _12_
     re.compile(r"(?P<num>\d{1,4})$"),  # trailing digits before extension
 ]

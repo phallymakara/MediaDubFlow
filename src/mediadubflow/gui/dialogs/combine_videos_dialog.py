@@ -90,11 +90,23 @@ class CombineVideosDialog(QDialog):
         self._initial_mode = initial_mode
         self._is_combining = False
         self._cancelled = False
+        self._has_combined = False
 
         self._batches: list[CombineBatchItem] = []
 
         self._setup_ui(initial_batch_size)
         self._refresh_plan()
+
+    @property
+    def has_combined(self) -> bool:
+        """Returns True if at least one combined video file was successfully created and replaced."""
+        return self._has_combined
+
+    def _get_default_dest_folder(self) -> Path:
+        """Resolve default destination folder without appending a 'combined' subfolder."""
+        if self._project.output_folder:
+            return Path(self._project.output_folder).resolve()
+        return settings.output_root
 
     def _setup_ui(self, initial_batch_size: int) -> None:
         main_layout = QVBoxLayout(self)
@@ -171,8 +183,8 @@ class CombineVideosDialog(QDialog):
             self._rb_use_source.setChecked(True)
             self._rb_use_dubbed.setEnabled(False)
 
-        self._rb_use_dubbed.toggled.connect(self._refresh_plan)
-        self._rb_use_source.toggled.connect(self._refresh_plan)
+        self._rb_use_dubbed.toggled.connect(self._on_source_toggled)
+        self._rb_use_source.toggled.connect(self._on_source_toggled)
 
         source_layout.addWidget(self._rb_use_dubbed)
         source_layout.addWidget(self._rb_use_source)
@@ -242,13 +254,10 @@ class CombineVideosDialog(QDialog):
         lbl_dest = QLabel("Destination:")
         lbl_dest.setStyleSheet("font-size: 12px; font-weight: 600; color: #475569;")
 
-        base_folder = (
-            Path(self._project.output_folder).resolve()
-            if self._project.output_folder
-            else settings.output_root
-        )
-        dest_folder = base_folder / "combined"
+        self._custom_dest_set = False
+        dest_folder = self._get_default_dest_folder()
         self._txt_dest = QLineEdit(str(dest_folder))
+        self._txt_dest.textEdited.connect(self._on_dest_text_edited)
         self._txt_dest.textChanged.connect(self._refresh_plan)
 
         self._btn_browse = QPushButton("Browse...")
@@ -326,7 +335,16 @@ class CombineVideosDialog(QDialog):
             self._txt_dest.text(),
         )
         if chosen:
+            self._custom_dest_set = True
             self._txt_dest.setText(chosen)
+
+    def _on_dest_text_edited(self) -> None:
+        self._custom_dest_set = True
+
+    def _on_source_toggled(self) -> None:
+        if not getattr(self, "_custom_dest_set", False) and hasattr(self, "_txt_dest"):
+            self._txt_dest.setText(str(self._get_default_dest_folder()))
+        self._refresh_plan()
 
     def _resolve_series_title(self) -> str:
         """Resolve localized Khmer series title from cache or project name."""
@@ -497,12 +515,41 @@ class CombineVideosDialog(QDialog):
                     break
 
                 out_path = dest_dir / batch.output_filename
+
+                # 1. Match each episode with its input path and filter out missing/errored files
+                valid_pairs: list[tuple[Episode, Path]] = []
+                skipped_episodes: list[Episode] = []
+
+                for ep, path in zip(batch.episodes, batch.input_paths):
+                    p = Path(path).resolve()
+                    if p.exists() and p.is_file() and p.stat().st_size > 0:
+                        valid_pairs.append((ep, p))
+                    else:
+                        skipped_episodes.append(ep)
+                        logger.warning(
+                            "Skipping error episode #{} (video file missing or empty: '{}')",
+                            ep.id,
+                            path,
+                        )
+
+                if not valid_pairs:
+                    msg = f"Skipped {batch.output_filename}: All {len(batch.episodes)} episodes had errors or missing video files."
+                    logger.warning(msg)
+                    errors.append(msg)
+                    if hasattr(self._bridge, "post_event"):
+                        self._bridge.post_event(lambda i=idx: self._progress_bar.setValue(i))
+                    continue
+
+                active_eps = [ep for ep, _ in valid_pairs]
+                active_paths = [p for _, p in valid_pairs]
+
                 logger.info(
-                    "Combining {} videos into '{}' (batch {}/{})",
-                    len(batch.input_paths),
+                    "Combining {} videos into '{}' (batch {}/{}){}",
+                    len(active_paths),
                     out_path.name,
                     idx,
                     total_batches,
+                    f" (skipped {len(skipped_episodes)} errored episodes)" if skipped_episodes else "",
                 )
 
                 # Update UI status via bridge callback
@@ -511,10 +558,142 @@ class CombineVideosDialog(QDialog):
                         lambda i=idx, b=batch: self._update_batch_progress(i, total_batches, b.output_filename)
                     )
 
-                code, _, stderr = await concatenate_videos(batch.input_paths, out_path)
-                if code == 0 and out_path.exists() and out_path.stat().st_size > 0:
+                temp_out_path = dest_dir / f".tmp_combine_{idx}_{batch.output_filename}"
+                if temp_out_path.exists():
+                    try:
+                        temp_out_path.unlink()
+                    except OSError:
+                        pass
+
+                code, _, stderr = await concatenate_videos(active_paths, temp_out_path)
+                if self._cancelled:
+                    if temp_out_path.exists():
+                        try:
+                            temp_out_path.unlink()
+                        except OSError:
+                            pass
+                    break
+
+                # If concatenation failed and we have multiple files, isolate and skip corrupted files
+                if code != 0 and len(active_paths) > 1:
+                    logger.warning(
+                        "Batch {} combination failed; checking and isolating any corrupted video files...",
+                        batch.output_filename,
+                    )
+                    from mediadubflow.utils.ffmpeg import run_ffmpeg
+
+                    probed_pairs: list[tuple[Episode, Path]] = []
+                    for ep, p in zip(active_eps, active_paths):
+                        probe_code, _, _ = await run_ffmpeg(
+                            ["-v", "error", "-i", str(p), "-t", "0.1", "-f", "null", "-"],
+                            timeout=15.0,
+                        )
+                        if probe_code == 0:
+                            probed_pairs.append((ep, p))
+                        else:
+                            skipped_episodes.append(ep)
+                            logger.error(
+                                "Episode #{} video '{}' is corrupted or unreadable. Skipping it.",
+                                ep.id,
+                                p,
+                            )
+
+                    if probed_pairs and len(probed_pairs) < len(active_paths):
+                        active_eps = [ep for ep, _ in probed_pairs]
+                        active_paths = [p for _, p in probed_pairs]
+                        logger.info(
+                            "Retrying combination for batch {} with {} verified non-error episodes",
+                            batch.output_filename,
+                            len(active_paths),
+                        )
+                        if temp_out_path.exists():
+                            try:
+                                temp_out_path.unlink()
+                            except OSError:
+                                pass
+                        code, _, stderr = await concatenate_videos(active_paths, temp_out_path)
+
+                if code == 0 and temp_out_path.exists() and temp_out_path.stat().st_size > 0:
+                    # 1. Remove ONLY the input video files that were successfully used for combining
+                    for old_path in active_paths:
+                        try:
+                            resolved_old = old_path.resolve()
+                            if (
+                                resolved_old != temp_out_path.resolve()
+                                and resolved_old != out_path.resolve()
+                                and resolved_old.exists()
+                            ):
+                                resolved_old.unlink(missing_ok=True)
+                                logger.info("Removed old video: {}", resolved_old)
+                                # Also clean up any orphan subtitle files with matching stem in the same folder
+                                for ext in [".srt", ".ass", ".vtt"]:
+                                    orphan_sub = resolved_old.with_suffix(ext)
+                                    if orphan_sub.exists() and orphan_sub.parent == resolved_old.parent:
+                                        try:
+                                            orphan_sub.unlink(missing_ok=True)
+                                            logger.info("Removed orphan subtitle: {}", orphan_sub)
+                                        except OSError:
+                                            pass
+                        except OSError as exc:
+                            logger.warning("Could not remove old video {}: {}", old_path, exc)
+
+                    # 2. Replace with the new combined video at out_path
+                    if out_path.exists() and out_path.resolve() != temp_out_path.resolve():
+                        try:
+                            out_path.unlink(missing_ok=True)
+                        except OSError:
+                            pass
+
+                    shutil.move(str(temp_out_path), str(out_path))
+                    logger.info("Replaced with combined video: {}", out_path)
                     succeeded_count += 1
+                    self._has_combined = True
+
+                    # 3. Update in-memory models and database checkpoint for COMBINED episodes only
+                    if self._rb_use_dubbed.isChecked():
+                        if active_eps:
+                            active_eps[0].output_video_path = str(out_path)
+                            for other_ep in active_eps[1:]:
+                                other_ep.output_video_path = None
+                        try:
+                            from mediadubflow.database.repository import update_episode_checkpoint
+                            from mediadubflow.database.session import get_session
+
+                            async with get_session() as session:
+                                await update_episode_checkpoint(
+                                    session,
+                                    episode_id=active_eps[0].id,
+                                    field="output_video_path",
+                                    value=str(out_path),
+                                )
+                                for other_ep in active_eps[1:]:
+                                    await update_episode_checkpoint(
+                                        session,
+                                        episode_id=other_ep.id,
+                                        field="output_video_path",
+                                        value=None,
+                                    )
+                        except Exception as exc:
+                            logger.debug("Database checkpoint update skipped: {}", exc)
+                    else:
+                        if active_eps:
+                            active_eps[0].source_file = str(out_path)
+                        try:
+                            from mediadubflow.database.session import get_session
+
+                            async with get_session() as session:
+                                ep0 = await session.get(Episode, active_eps[0].id)
+                                if ep0:
+                                    ep0.source_file = str(out_path)
+                                    await session.commit()
+                        except Exception as exc:
+                            logger.debug("Database source_file update skipped: {}", exc)
                 else:
+                    if temp_out_path.exists():
+                        try:
+                            temp_out_path.unlink()
+                        except OSError:
+                            pass
                     msg = f"Failed to combine {batch.output_filename}: {stderr[:150]}"
                     errors.append(msg)
                     logger.error(msg)
@@ -540,7 +719,7 @@ class CombineVideosDialog(QDialog):
                 self._lbl_status.setStyleSheet("color: #dc2626; font-weight: 600; font-size: 12px;")
             else:
                 self._lbl_status.setText(
-                    f"Successfully combined all {succeeded_count} video file(s) into output directory!"
+                    f"Successfully combined and replaced {succeeded_count} video file(s)!"
                 )
                 self._lbl_status.setStyleSheet("color: #16a34a; font-weight: 600; font-size: 12px;")
 

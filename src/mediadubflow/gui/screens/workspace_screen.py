@@ -808,6 +808,8 @@ class WorkspaceScreen(QWidget):
             parent=self,
         )
         dlg.exec()
+        if getattr(dlg, "has_combined", False) and self._project and self._project.id:
+            self.load_project(self._project.id)
 
     def _on_combine_all_clicked(self) -> None:
         """Open video combination dialog configured to combine all episodes into one."""
@@ -830,6 +832,8 @@ class WorkspaceScreen(QWidget):
             parent=self,
         )
         dlg.exec()
+        if getattr(dlg, "has_combined", False) and self._project and self._project.id:
+            self.load_project(self._project.id)
 
     # -------------------------------------------------------------------------
 

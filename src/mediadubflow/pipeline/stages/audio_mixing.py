@@ -249,22 +249,25 @@ class AudioMixingStage(PipelineStage):
                 gain = np.ones(frames_count, dtype=np.float32)
                 merged_intervals: list[tuple[float, float]] = []
             else:
-                # 5. Build dialogue mute/duck intervals
-                # When mute_speaker is True: use 150ms pre-roll and 200ms post-roll so zero syllable leaks
-                pre_roll_sec = 0.15 if mute_speaker else 0.06
-                post_roll_sec = 0.20 if mute_speaker else 0.08
-                merge_gap = 0.40 if mute_speaker else 0.15
+                # When mute_speaker is True: use 220ms pre-roll and 280ms post-roll so zero syllable leaks
+                pre_roll_sec = 0.22 if mute_speaker else 0.06
+                post_roll_sec = 0.28 if mute_speaker else 0.08
+                merge_gap = 0.65 if mute_speaker else 0.15
 
                 # Inspect TTS chunk lengths from work_dir / "tts_chunks"
                 chunks_dir = ctx.work_dir / "tts_chunks"
                 chunk_durations: dict[int, float] = {}
                 if chunks_dir.exists():
-                    for idx, chunk_file in enumerate(sorted(chunks_dir.glob("chunk_*.wav"))):
-                        try:
-                            with wave.open(str(chunk_file), "rb") as cw:
-                                chunk_durations[idx] = cw.getnframes() / float(cw.getframerate())
-                        except Exception:
-                            pass
+                    import re  # noqa: PLC0415
+                    for chunk_file in chunks_dir.glob("chunk_*.wav"):
+                        m = re.match(r"^chunk_(\d+)\.wav$", chunk_file.name)
+                        if m:
+                            idx_val = int(m.group(1))
+                            try:
+                                with wave.open(str(chunk_file), "rb") as cw:
+                                    chunk_durations[idx_val] = cw.getnframes() / float(cw.getframerate())
+                            except Exception:
+                                pass
 
                 intervals: list[tuple[float, float]] = []
 
@@ -339,6 +342,12 @@ class AudioMixingStage(PipelineStage):
                         t_fi = np.linspace(np.pi, 0.0, len(fi_slice), endpoint=False)
                         curve_fi = target_gain + (1.0 - target_gain) * 0.5 * (1.0 + np.cos(t_fi))
                         gain[e_idx:fi_end] = np.minimum(fi_slice, curve_fi)
+
+            # When mute_speaker is True: guarantee that wherever active TTS dialogue is playing,
+            # gain is 0.0 (no original voice underneath Khmer speech)
+            if mute_speaker and has_tts_audio:
+                tts_active_len = min(len(gain), len(tts_abs))
+                gain[:tts_active_len] = np.where(tts_abs[:tts_active_len] > 30.0, 0.0, gain[:tts_active_len])
 
             # 7. Apply gain envelope and background volume (continuous throughout entire video)
             if bg_ch > 1:

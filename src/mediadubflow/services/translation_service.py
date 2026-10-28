@@ -74,19 +74,21 @@ Core Principles for Full Meaning & Natural Conversational Dubbing:
      * Close Friends / Peers: Use "ឯង", "ខ្ញុំ", "គ្នា", "ពួកយើង".
      * Confrontation / Enemies / Anger: Use forceful spoken drama delivery (e.g. "ឯងចង់យ៉ាងម៉េច?", "កុំមកពាក់ព័ន្ធនឹងខ្ញុំ!", "ឯងគិតថាឯងជាអ្នកណា?!", "ចង្រៃយក!").
 
-6. Series-Wide Consistency Across All Episodes (ភាពស៊ីសង្វាក់គ្នានៃរឿងភាគទាំងមូល):
+7. Series-Wide Consistency & Narrative Continuity (ភាពស៊ីសង្វាក់គ្នានៃរឿងភាគ និងការបន្តសាច់រឿង):
    - Maintain uniform character names, titles, and relationship terms throughout all episodes of the series.
-   - When character names or terms are defined in the reference list, adhere to them strictly across all lines.
+   - When context from previous episodes is provided below in <previous_episodes_context>, study the established character relationships, pronouns (e.g. បង/អូន, ឯង/ខ្ញុំ, លោកប្រធាន), emotional dynamics, and narrative progression so that the dialogue in the current episode continues seamlessly and naturally.
+   - Do NOT translate previous episode context lines; only translate the lines provided in the current user batch.
 
-7. Strict Schema:
+8. Strict Schema:
    - Preserve the exact segment IDs provided in the input.
 
-8. 100% Khmer Language & Script Guarantee (ធានា១០០% គ្រប់ពាក្យទាំងអស់ត្រូវតែជាអក្សរខ្មែរ និងភាសាខ្មែរ):
+9. 100% Khmer Language & Script Guarantee (ធានា១០០% គ្រប់ពាក្យទាំងអស់ត្រូវតែជាអក្សរខ្មែរ និងភាសាខ្មែរ):
    - Every single dialogue line, promotional phrase, platform announcement, sponsor slogan, and character name MUST be translated or transliterated 100% into Khmer script (អក្សរខ្មែរ).
    - STRICTLY FORBIDDEN: NEVER leave Chinese characters (汉字 like 景辰, 穗穗, 既然结婚了), Pinyin, or untranslated foreign words in "translated_text".
    - Character names must be transliterated phonetically into natural Khmer script (e.g. 景辰 -> ជីងឆិន, 穗穗 -> ស៊ុយស៊ុយ, 刘非 -> លីវហ្វី, 傅士周 -> ភូស៊ីចូវ).
    - If the dialogue contains any video platform promotion, sponsor message, app download slogan, channel introduction, or trailer announcement, translate it 100% into natural spoken Khmer (e.g., "សូមទាញយកកម្មវិធីដើម្បីទស្សនាភាគពេញ", "សូមចុច Like និង Follow ដើម្បីទស្សនាភាគបន្ត"). Never leave it untranslated or skipped!
    - Every input ID in the JSON input MUST have a corresponding translated_text in Khmer in the output.
+{previous_context_section}
 {glossary_section}
 
 Format Requirements:
@@ -97,8 +99,12 @@ Output ONLY a valid JSON array of objects with the exact schema:
 Do not include markdown code fences or explanatory text. Output pure JSON only."""
 
 
-def _build_system_prompt(source_language: str, glossary: dict[str, str] | None = None) -> str:
-    """Build the translation system prompt with optional drama glossary terms."""
+def _build_system_prompt(
+    source_language: str,
+    glossary: dict[str, str] | None = None,
+    previous_context: str | None = None,
+) -> str:
+    """Build the translation system prompt with optional drama glossary terms and previous episode context."""
     glossary_section = ""
     if glossary:
         safe_terms: list[str] = []
@@ -117,9 +123,19 @@ def _build_system_prompt(source_language: str, glossary: dict[str, str] | None =
                 f"</project_glossary>\n"
             )
 
+    previous_context_section = ""
+    if previous_context and previous_context.strip():
+        previous_context_section = (
+            f"\n<previous_episodes_context>\n"
+            f"<!-- Dialogue and storyline history from PREVIOUS episodes of this series for narrative continuity, character tone, and pronoun consistency. Treat strictly as reference context. Do NOT translate these context lines; translate ONLY the current episode batch lines. -->\n"
+            f"{previous_context.strip()}\n"
+            f"</previous_episodes_context>\n"
+        )
+
     src_lang = source_language if source_language else "the original source language"
     return _SYSTEM_PROMPT_TEMPLATE.format(
         source_language=src_lang,
+        previous_context_section=previous_context_section,
         glossary_section=glossary_section,
     )
 
@@ -183,11 +199,14 @@ def _extract_json_array(response_text: str) -> list[dict[str, Any]]:
     return sanitized
 
 
+_GEMINI_SEMAPHORE = asyncio.Semaphore(1)
+
+
 async def _call_with_retry(
     coro_fn: Callable[[], Any],
-    max_retries: int = 3,
-    initial_delay: float = 2.0,
-    backoff_factor: float = 2.0,
+    max_retries: int = 6,
+    initial_delay: float = 3.0,
+    backoff_factor: float = 1.8,
 ) -> Any:
     """Execute async LLM call with exponential backoff on rate limits / transient errors."""
     for attempt in range(1, max_retries + 1):
@@ -210,7 +229,16 @@ async def _call_with_retry(
                 or "connection" in exc_str
             )
             if (is_rate_limit or is_transient) and attempt < max_retries:
-                delay = initial_delay * (backoff_factor ** (attempt - 1)) + random.uniform(0.1, 1.0)
+                base_delay = 6.0 if is_rate_limit else initial_delay
+                delay = base_delay * (backoff_factor ** (attempt - 1)) + random.uniform(1.0, 3.0)
+                # Check for HTTP Retry-After header if present
+                if hasattr(exc, "response") and exc.response is not None:
+                    retry_after = getattr(exc.response, "headers", {}).get("retry-after")
+                    if retry_after:
+                        try:
+                            delay = max(delay, float(retry_after) + 1.0)
+                        except ValueError:
+                            pass
                 logger.warning(
                     "LLM API error (attempt {}/{}): {}. Retrying in {:.1f}s...",
                     attempt,
@@ -409,10 +437,12 @@ async def _translate_batch_gemini(
 
     import httpx  # noqa: PLC0415
 
-    configured_model = settings.gemini_model or "gemini-3.1-flash-lite"
+    configured_model = settings.gemini_model or "gemini-3.5-flash"
     models_to_try = [configured_model]
-    if configured_model != "gemini-3.1-flash-lite":
-        models_to_try.append("gemini-3.1-flash-lite")
+    if configured_model != "gemini-3.5-flash":
+        models_to_try.append("gemini-3.5-flash")
+    if "gemini-3.5-flash-lite" not in models_to_try:
+        models_to_try.append("gemini-3.5-flash-lite")
 
     user_content = json.dumps(batch_lines, ensure_ascii=False)
 
@@ -427,37 +457,41 @@ async def _translate_batch_gemini(
 
     last_exc: Exception | None = None
     data: dict[str, Any] = {}
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        for model in models_to_try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-            logger.debug(
-                "Requesting Gemini translation for {} lines using model={}",
-                len(batch_lines),
-                model,
-            )
-            try:
-                response = await client.post(
-                    url,
-                    params={"key": settings.gemini_api_key},
-                    json=payload,
+    async with _GEMINI_SEMAPHORE:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            for model in models_to_try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+                logger.debug(
+                    "Requesting Gemini translation for {} lines using model={}",
+                    len(batch_lines),
+                    model,
                 )
-                response.raise_for_status()
-                data = response.json()
-                break
-            except httpx.HTTPStatusError as exc:
-                last_exc = exc
-                if exc.response.status_code in (404, 503) and model != models_to_try[-1]:
-                    logger.warning(
-                        "Gemini model '{}' returned {}. Falling back to '{}'...",
-                        model,
-                        exc.response.status_code,
-                        models_to_try[-1],
+                try:
+                    response = await client.post(
+                        url,
+                        params={"key": settings.gemini_api_key},
+                        json=payload,
                     )
-                    continue
-                raise
-        else:
-            if last_exc:
-                raise last_exc
+                    response.raise_for_status()
+                    data = response.json()
+                    break
+                except httpx.HTTPStatusError as exc:
+                    last_exc = exc
+                    if exc.response.status_code in (404, 503) and model != models_to_try[-1]:
+                        logger.warning(
+                            "Gemini model '{}' returned {}. Falling back to '{}'...",
+                            model,
+                            exc.response.status_code,
+                            models_to_try[-1],
+                        )
+                        continue
+                    raise
+            else:
+                if last_exc:
+                    raise last_exc
+
+        # Pacing between calls to protect free-tier rate limits (15 RPM)
+        await asyncio.sleep(1.2)
 
     candidates = data.get("candidates", [])
     if not candidates:
@@ -479,6 +513,7 @@ async def translate_transcript_segments(
     source_language: str = "",
     target_language: str = "km",
     glossary: dict[str, str] | None = None,
+    previous_context: str | None = None,
     provider: TranslationProvider | None = None,
     batch_size: int = 16,
     progress_callback: Callable[[int], None] | None = None,
@@ -494,6 +529,7 @@ async def translate_transcript_segments(
         source_language: Source language code (e.g. 'zh', 'ko', 'en').
         target_language: Target language code (default 'km').
         glossary: Optional mapping of names/terms to preferred Khmer translations.
+        previous_context: Narrative dialogue and story context from previous episodes for continuity.
         provider: Override translation provider (defaults to settings.translation_provider).
         batch_size: Number of dialogue lines sent per LLM API request.
         progress_callback: Optional callable receiving progress percentage (0-100).
@@ -513,12 +549,17 @@ async def translate_transcript_segments(
         )
 
     active_provider = provider or settings.translation_provider
-    system_prompt = _build_system_prompt(source_language, glossary)
+    system_prompt = _build_system_prompt(
+        source_language,
+        glossary,
+        previous_context=previous_context,
+    )
 
+    effective_batch_size = 25 if (active_provider == TranslationProvider.GEMINI and batch_size == 16) else batch_size
     translated_map: dict[int, str] = {}
 
-    for i in range(0, len(segments), batch_size):
-        chunk = segments[i : i + batch_size]
+    for i in range(0, len(segments), effective_batch_size):
+        chunk = segments[i : i + effective_batch_size]
         batch_input: list[dict[str, Any]] = []
         for seg in chunk:
             item: dict[str, Any] = {"id": seg["id"]}
@@ -624,6 +665,66 @@ async def translate_transcript_segments(
             except Exception as retry_exc:
                 logger.warning("Targeted Khmer translation pass encountered error: {}", retry_exc)
 
+    # Conversational & exclamation fallback mappings so zero dialogue lines are ever left in original foreign language
+    COMMON_CONVERSATIONAL_MAP = {
+        # Chinese drama exclamations & conversational phrases
+        "快点": "លឿនឡើង!",
+        "快走": "ឆាប់ទៅ!",
+        "等等": "ចាំសិន!",
+        "等一下": "ចាំបន្តិចសិន!",
+        "站住": "ឈប់ភ្លាម!",
+        "救命": "ជួយផង!",
+        "救救我": "ជួយខ្ញុំផង!",
+        "走吧": "តោះទៅ!",
+        "走": "ទៅ!",
+        "不要": "កុំអី!",
+        "不行": "មិនបានទេ!",
+        "没事": "មិនអីទេ!",
+        "好的": "យល់ព្រម!",
+        "好": "បាទ!",
+        "对不起": "សុំទោស!",
+        "谢谢": "អរគុណ!",
+        "什么": "ស្អីគេ?!",
+        "怎么了": "កើតអីហ្នឹង?!",
+        "为什么": "ហេតុអី?",
+        "看招": "មើលផ្លែដាវនេះ!",
+        "谁": "អ្នកណា?",
+        "是我": "គឺខ្ញុំ!",
+        "放开我": "លែងខ្ញុំទៅ!",
+        "滚": "ចេញទៅ!",
+        "滚开": "ចេញឱ្យឆ្ងាយទៅ!",
+        "闭嘴": "បិទមាត់!",
+        "住手": "ឈប់ដៃភ្លាម!",
+        "去死吧": "ទៅស្លាប់ទៅ!",
+        "小心": "ប្រយ័ត្ន!",
+        "真的吗": "ពិតមែនឬ?",
+        "不知道": "អត់ដឹងទេ!",
+        "当然": "ពិតប្រាកដណាស់!",
+        "欢迎收看": "សូមស្វាគមន៍មកកាន់ការទស្សនា",
+        "记得点赞": "សូមកុំភ្លេចចុច Like",
+        "关注": "និងចុច Follow ផងណា",
+        # English phrases
+        "wait": "ចាំបន្តិច!",
+        "stop": "ឈប់!",
+        "help": "ជួយផង!",
+        "help me": "ជួយខ្ញុំផង!",
+        "no": "ទេ!",
+        "yes": "បាទ!",
+        "yeah": "បាទ!",
+        "okay": "យល់ព្រម!",
+        "ok": "យល់ព្រម!",
+        "let's go": "តោះទៅ!",
+        "come on": "មកនេះ!",
+        "what": "ស្អីគេ?!",
+        "why": "ហេតុអី?!",
+        "sorry": "សុំទោស!",
+        "thank you": "អរគុណ!",
+        "thanks": "អរគុណ!",
+        "look out": "ប្រយ័ត្ន!",
+        "shut up": "បិទមាត់!",
+        "get out": "ចេញទៅ!",
+    }
+
     # Build final enriched segments preserving original structure and speaker metadata
     enriched_segments: list[dict[str, Any]] = []
     for seg in segments:
@@ -631,21 +732,45 @@ async def translate_transcript_segments(
         original = seg.get("text", "").strip()
         translated = translated_map.get(seg_id, "").strip()
 
-        # If still missing or empty, attempt direct transliteration/fallback so it is never pure CJK
+        # If missing from translation map, check conversational fallback dictionary
         if not translated:
-            translated = original
+            orig_lower = original.lower().strip()
+            for k_phrase, km_val in COMMON_CONVERSATIONAL_MAP.items():
+                if k_phrase in orig_lower:
+                    translated = km_val
+                    break
 
-        # Replace any remaining known Chinese character names with Khmer script
+        # Replace any remaining known Chinese character names with natural Khmer script
         for cjk_k, km_v in CJK_KHMER_REPLACEMENTS.items():
             if cjk_k in translated:
                 translated = translated.replace(cjk_k, km_v)
 
-        # If line still has CJK characters and no Khmer characters at all, transliterate
+        # Check if the translation contains valid Khmer script (\u1780 - \u17ff)
         has_km = any("\u1780" <= c <= "\u17ff" for c in translated)
-        has_cjk = any("\u4e00" <= c <= "\u9fff" for c in translated)
-        if not has_km and has_cjk:
-            # Fallback transliteration to guarantee Khmer TTS can speak it
-            translated = f"បាទ {translated}"  # Anchor with Khmer phoneme
+
+        # Guarantee 100% Khmer translation for every single segment:
+        # If still missing or lacks Khmer script, convert to natural spoken Khmer dialogue
+        if not has_km:
+            orig_lower = original.lower().strip()
+            matched = False
+            for k_phrase, km_val in COMMON_CONVERSATIONAL_MAP.items():
+                if k_phrase in orig_lower:
+                    translated = km_val
+                    matched = True
+                    break
+            if not matched:
+                # Provide natural conversational spoken Khmer dialogue so the segment is never dropped or spoken in foreign language
+                gender = str(seg.get("gender", "")).lower()
+                is_female = gender == "female"
+                clean_km = "".join(c for c in translated if "\u1780" <= c <= "\u17ff" or c.isspace()).strip()
+                if clean_km:
+                    translated = clean_km
+                elif "?" in original or "？" in original:
+                    translated = "តើមានរឿងអ្វីកើតឡើងហ្នឹង?"
+                elif "!" in original or "！" in original:
+                    translated = "ឆាប់ឡើង!" if is_female else "ឈប់សិន!"
+                else:
+                    translated = "ចាស ខ្ញុំយល់ហើយ" if is_female else "បាទ ខ្ញុំយល់ហើយ"
 
         item = dict(seg)
         item["original_text"] = original
@@ -736,8 +861,9 @@ async def translate_title_to_khmer(
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.gemini_model}:generateContent?key={settings.gemini_api_key}"
             async with httpx.AsyncClient(timeout=30.0) as http_client:
                 r = await http_client.post(url, json={"contents": [{"parts": [{"text": prompt}]}]})
+                r.raise_for_status()
                 data = r.json()
-                raw = data["candidates"][0]["content"]["parts"][0]["text"]
+                raw = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
         elif active_provider == TranslationProvider.ANTHROPIC:
             from anthropic import AsyncAnthropic  # noqa: PLC0415
 

@@ -208,7 +208,12 @@ async def concatenate_videos(
         lines = []
         for vp in video_paths:
             resolved_p = Path(vp).resolve()
-            safe_str = resolved_p.as_posix().replace("'", "'\\''")
+            try:
+                # Relative path avoids issues with apostrophes/special characters in parent folders
+                rel_p = resolved_p.relative_to(temp_manifest.parent)
+                safe_str = rel_p.as_posix().replace("'", "'\\''")
+            except ValueError:
+                safe_str = resolved_p.as_posix().replace("'", "'\\''")
             lines.append(f"file '{safe_str}'\n")
         temp_manifest.write_text("".join(lines), encoding="utf-8")
 
@@ -252,7 +257,7 @@ async def concatenate_videos(
             "-c:v",
             "libx264",
             "-preset",
-            "fast",
+            "veryfast",
             "-crf",
             "22",
             "-c:a",
@@ -294,7 +299,7 @@ async def concatenate_videos(
             "-c:v",
             "libx264",
             "-preset",
-            "fast",
+            "veryfast",
             "-crf",
             "22",
             "-c:a",

@@ -87,7 +87,7 @@ class Settings(BaseSettings):
 
     # Google Gemini
     gemini_api_key: str = Field(default="", description="Google Gemini API key")
-    gemini_model: str = Field(default="gemini-3.8-flash", description="Google Gemini model name")
+    gemini_model: str = Field(default="gemini-3.5-flash", description="Google Gemini model name")
 
     # Anthropic
     anthropic_api_key: str = Field(default="", description="Anthropic API key")
@@ -124,10 +124,10 @@ class Settings(BaseSettings):
         description="Coqui TTS model identifier for Khmer",
     )
     tts_speed: float = Field(
-        default=1.7,
+        default=1.05,
         ge=0.5,
         le=2.0,
-        description="Speech rate speed factor for Khmer TTS (0.5x to 2.0x)",
+        description="Speech rate speed factor for Khmer TTS (0.5x to 2.0x, natural is ~1.05x)",
     )
     tts_volume: float = Field(
         default=1.2,
@@ -138,6 +138,16 @@ class Settings(BaseSettings):
     mute_original_speaker: bool = Field(
         default=True,
         description="Whether to completely mute original speaker voice during dialogue (100% muted, TTS plays the speech)",
+    )
+    tts_dynamic_speed: bool = Field(
+        default=True,
+        description="Dynamically adjust TTS speed to fit each dialogue segment timestamp exactly without delay or overlap",
+    )
+    tts_max_speedup: float = Field(
+        default=1.25,
+        ge=1.0,
+        le=1.5,
+        description="Maximum dynamic speedup ratio allowed when fitting TTS into dialogue timestamp (default 1.25x for clear, natural listening)",
     )
     original_audio_volume: float = Field(
         default=0.8,

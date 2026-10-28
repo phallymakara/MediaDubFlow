@@ -30,39 +30,41 @@ def _transcribe_audio_sync(
     model = get_whisper_model()
 
     # Pass language if specified, otherwise let Whisper auto-detect
-    lang_param = source_language.strip() if (source_language and source_language.strip()) else None
+    lang_param = (
+        source_language.strip()
+        if (source_language and source_language.strip() and source_language.strip().lower() != "auto")
+        else None
+    )
 
-    # Enable Silero VAD and disable condition_on_previous_text to prevent YouTube hallucination loops
+    # Enable highly sensitive Silero VAD across all parts so EVERY vocal sound in the video is detected
+    vad_parameters = {
+        "threshold": 0.20,
+        "min_speech_duration_ms": 100,
+        "max_speech_duration_s": float("inf"),
+        "min_silence_duration_ms": 250,
+        "speech_pad_ms": 300,
+    }
+
     segments_gen, info = model.transcribe(
         str(audio_path),
         language=lang_param,
         word_timestamps=True,
-        vad_filter=False,
+        vad_filter=True,
+        vad_parameters=vad_parameters,
         condition_on_previous_text=False,
     )
-
-    import re  # noqa: PLC0415
-
-    spam_patterns = [
-        re.compile(r"请不吝点赞|订阅\s*转发|打赏支持|明镜与点点", re.IGNORECASE),
-        re.compile(r"优优独播剧场|YoYo Television Series", re.IGNORECASE),
-        re.compile(r"欢迎订阅|感谢收看|记得点赞|关注微信公众号", re.IGNORECASE),
-    ]
-
-    def _is_hallucination(t: str) -> bool:
-        clean = t.strip()
-        return any(p.search(clean) for p in spam_patterns)
 
     serialized_segments: list[dict[str, Any]] = []
     seg_idx = 1
 
     for seg in segments_gen:
-        # Skip pure silence, high no-speech probability, or known YouTube hallucinations
-        if (
-            getattr(seg, "no_speech_prob", 0.0) > 0.85
-            or not seg.text.strip()
-            or _is_hallucination(seg.text)
-        ):
+        clean_seg_text = seg.text.strip()
+        # Must have decoded text to translate and dub
+        if not clean_seg_text:
+            continue
+
+        # Skip only if Whisper is absolutely certain there is no speech AND no words were decoded
+        if getattr(seg, "no_speech_prob", 0.0) > 0.98 and not getattr(seg, "words", None):
             continue
 
         words = seg.words or []
@@ -72,7 +74,7 @@ def _transcribe_audio_sync(
                     "id": seg_idx,
                     "start": round(float(seg.start), 3),
                     "end": round(float(seg.end), 3),
-                    "text": seg.text.strip(),
+                    "text": clean_seg_text,
                     "words": [],
                 }
             )
@@ -94,12 +96,12 @@ def _transcribe_audio_sync(
 
         for cl in clusters:
             if len(clusters) == 1:
-                txt = seg.text.strip()
+                txt = clean_seg_text
             else:
                 raw_words = [str(getattr(w, "word", "")).strip() for w in cl if str(getattr(w, "word", "")).strip()]
                 has_cjk = any("\u4e00" <= ch <= "\u9fff" for w in raw_words for ch in w)
                 txt = "".join(raw_words) if has_cjk else " ".join(raw_words)
-            if not txt or _is_hallucination(txt):
+            if not txt:
                 continue
             words_list = [
                 {

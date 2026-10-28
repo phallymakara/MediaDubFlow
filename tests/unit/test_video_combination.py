@@ -168,3 +168,186 @@ def test_combine_videos_dialog_source_video_fallback(qtbot, tmp_path: Path) -> N
     # 1 batch containing the 3 source episodes
     assert len(dlg._batches) == 1
     assert len(dlg._batches[0].input_paths) == 3
+    # Destination defaults directly to output folder, not a "combined" subfolder
+    assert dlg._txt_dest.text() == str((tmp_path / "output").resolve())
+
+
+def test_combine_videos_execution_removes_old_and_replaces(qtbot, tmp_path: Path, monkeypatch) -> None:
+    """Verifies that combining videos removes old video files and replaces with the combined file."""
+    output_dir = tmp_path / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create 3 old video files
+    old_files = []
+    episodes = []
+    for i in range(1, 4):
+        p = output_dir / f"[ភាគ {i:02d}] Old Episode {i}.mp4"
+        p.write_bytes(f"old video {i} data".encode())
+        old_files.append(p)
+        ep = Episode(
+            id=i,
+            project_id=10,
+            episode_number=i,
+            title=f"Episode {i}",
+            source_file=str(tmp_path / f"src_{i}.mp4"),
+            output_video_path=str(p),
+            status=EpisodeStatus.DONE,
+        )
+        episodes.append(ep)
+
+    project = Project(
+        id=10,
+        name="Combined Series",
+        source_folder=str(tmp_path / "sources"),
+        output_folder=str(output_dir),
+    )
+    project.episodes = episodes
+
+    # Mock bridge to run async coroutines synchronously in test
+    class SynchronousBridge:
+        def run_async(self, coro, on_success=None, on_error=None):
+            import asyncio
+            try:
+                res = asyncio.run(coro)
+                if on_success:
+                    on_success(res)
+            except Exception as exc:
+                if on_error:
+                    on_error(exc)
+
+        def post_event(self, fn):
+            fn()
+
+    # Mock concatenate_videos to write dummy merged content
+    async def mock_concat(input_paths, output_path):
+        output_path.write_bytes(b"merged video content")
+        return 0, "OK", ""
+
+    monkeypatch.setattr("mediadubflow.gui.dialogs.combine_videos_dialog.concatenate_videos", mock_concat)
+
+    dlg = CombineVideosDialog(
+        project=project,
+        episodes=episodes,
+        bridge=SynchronousBridge(),
+        initial_mode="all",
+    )
+    qtbot.addWidget(dlg)
+
+    # Destination is directly output_dir, NOT output_dir / "combined"
+    assert dlg._txt_dest.text() == str(output_dir.resolve())
+    assert len(dlg._batches) == 1
+
+    # Before combine, old files exist
+    for f in old_files:
+        assert f.exists()
+
+    # Start combining
+    dlg._btn_start.click()
+
+    # Verify old files were removed
+    for f in old_files:
+        assert not f.exists(), f"Old video {f} should have been removed!"
+
+    # Verify combined video was created directly in output_dir
+    expected_out = output_dir / dlg._batches[0].output_filename
+    assert expected_out.exists()
+    assert expected_out.read_bytes() == b"merged video content"
+    assert dlg.has_combined is True
+
+
+def test_combine_videos_skips_error_episodes_and_combines_valid(qtbot, tmp_path: Path, monkeypatch) -> None:
+    """Verifies that errored/missing episodes are skipped and valid ones are combined and removed."""
+    output_dir = tmp_path / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # ep1 valid, ep2 missing/error, ep3 valid
+    f1 = output_dir / "ep1.mp4"
+    f1.write_bytes(b"content ep1")
+    f2_missing = output_dir / "ep2_missing.mp4"  # Does not exist!
+    f3 = output_dir / "ep3.mp4"
+    f3.write_bytes(b"content ep3")
+
+    ep1 = Episode(
+        id=101,
+        project_id=888,
+        episode_number=1,
+        title="Ep 1",
+        output_video_path=str(f1),
+        status=EpisodeStatus.DONE,
+    )
+    ep2 = Episode(
+        id=102,
+        project_id=888,
+        episode_number=2,
+        title="Ep 2",
+        output_video_path=str(f2_missing),
+        status=EpisodeStatus.FAILED,
+    )
+    ep3 = Episode(
+        id=103,
+        project_id=888,
+        episode_number=3,
+        title="Ep 3",
+        output_video_path=str(f3),
+        status=EpisodeStatus.DONE,
+    )
+
+    project = Project(
+        id=888,
+        name="Skip Error Test Drama",
+        source_folder=str(tmp_path / "src"),
+        output_folder=str(output_dir),
+    )
+    episodes = [ep1, ep2, ep3]
+    project.episodes = episodes
+
+    class SynchronousBridge:
+        def run_async(self, coro, on_success=None, on_error=None):
+            import asyncio
+            try:
+                res = asyncio.run(coro)
+                if on_success:
+                    on_success(res)
+            except Exception as exc:
+                if on_error:
+                    on_error(exc)
+
+        def post_event(self, fn):
+            fn()
+
+    combined_inputs = []
+
+    async def mock_concat(input_paths, output_path):
+        combined_inputs.extend(input_paths)
+        output_path.write_bytes(b"combined without errors")
+        return 0, "OK", ""
+
+    monkeypatch.setattr("mediadubflow.gui.dialogs.combine_videos_dialog.concatenate_videos", mock_concat)
+
+    dlg = CombineVideosDialog(
+        project=project,
+        episodes=episodes,
+        bridge=SynchronousBridge(),
+        initial_mode="all",
+    )
+    qtbot.addWidget(dlg)
+
+    # Start combining
+    dlg._btn_start.click()
+
+    # The inputs sent to concat should only be f1 and f3, NOT f2_missing
+    assert f1.resolve() in combined_inputs
+    assert f3.resolve() in combined_inputs
+    assert f2_missing.resolve() not in combined_inputs
+
+    # f1 and f3 should have been removed after combination
+    assert not f1.exists()
+    assert not f3.exists()
+
+    # Output file should exist
+    expected_out = output_dir / dlg._batches[0].output_filename
+    assert expected_out.exists()
+    assert expected_out.read_bytes() == b"combined without errors"
+    assert dlg.has_combined is True
+
+

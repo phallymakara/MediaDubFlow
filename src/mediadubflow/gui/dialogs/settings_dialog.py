@@ -81,7 +81,7 @@ class SettingsDialog(QDialog):
         self._cmb_provider = QComboBox()
         self._cmb_provider.addItem("OpenAI (GPT-4o / Compatible)", TranslationProvider.OPENAI)
         self._cmb_provider.addItem("Azure OpenAI (Custom Endpoint)", TranslationProvider.AZURE_OPENAI)
-        self._cmb_provider.addItem("Google Gemini (Gemini 2.0 Flash)", TranslationProvider.GEMINI)
+        self._cmb_provider.addItem("Google Gemini (Gemini 3.5 Flash)", TranslationProvider.GEMINI)
         self._cmb_provider.addItem("Anthropic (Claude 3.5 Sonnet)", TranslationProvider.ANTHROPIC)
         self._cmb_provider.currentIndexChanged.connect(self._on_provider_changed)
         form_layout.addRow("Translation Provider:", self._cmb_provider)
@@ -142,7 +142,7 @@ class SettingsDialog(QDialog):
         layout_gemini.addRow("Google Gemini API Key:", self._txt_gemini_key)
 
         self._txt_gemini_model = QLineEdit()
-        self._txt_gemini_model.setPlaceholderText("gemini-3.8-flash")
+        self._txt_gemini_model.setPlaceholderText("gemini-3.5-flash")
         layout_gemini.addRow("Model Name:", self._txt_gemini_model)
 
         # Page D: Anthropic
@@ -208,6 +208,11 @@ class SettingsDialog(QDialog):
         self._chk_mute_original = QCheckBox("Mute Original Speaker Completely (100% muted during dialogue, new TTS voice plays the speech)")
         self._chk_mute_original.setStyleSheet("font-weight: 600; font-size: 13px; color: #0f172a;")
         general_form_layout.addRow("", self._chk_mute_original)
+
+        # Dynamic Speed Auto-Fitting Checkbox
+        self._chk_dynamic_speed = QCheckBox("Dynamic Speed Auto-Fitting (Fit Khmer TTS into original speech timestamp with zero delay/drift)")
+        self._chk_dynamic_speed.setStyleSheet("font-weight: 600; font-size: 13px; color: #0f172a;")
+        general_form_layout.addRow("", self._chk_dynamic_speed)
 
         # TTS Voice Selection
         self._cmb_tts_voice = QComboBox()
@@ -327,7 +332,7 @@ class SettingsDialog(QDialog):
         self._txt_azure_version.setText(self._clean_val(settings.azure_openai_api_version) or "2024-08-01-preview")
 
         self._txt_gemini_key.setText(self._clean_val(settings.gemini_api_key))
-        self._txt_gemini_model.setText(self._clean_val(settings.gemini_model) or "gemini-2.0-flash")
+        self._txt_gemini_model.setText(self._clean_val(settings.gemini_model) or "gemini-3.5-flash")
 
         self._txt_anthropic_key.setText(self._clean_val(settings.anthropic_api_key))
         self._txt_anthropic_model.setText(self._clean_val(settings.anthropic_model) or "claude-3-5-sonnet-20241022")
@@ -352,6 +357,7 @@ class SettingsDialog(QDialog):
             self._cmb_tts_voice.setCurrentIndex(voice_idx)
 
         self._chk_mute_original.setChecked(settings.mute_original_speaker)
+        self._chk_dynamic_speed.setChecked(getattr(settings, "tts_dynamic_speed", True))
         vol_val = int(round(settings.tts_volume * 100))
         self._slider_volume.setValue(vol_val)
         self._lbl_volume_val.setText(f"{vol_val}%")
@@ -400,7 +406,7 @@ class SettingsDialog(QDialog):
         azure_version = self._clean_val(self._txt_azure_version.text()) or "2024-08-01-preview"
 
         gemini_key = self._clean_val(self._txt_gemini_key.text())
-        gemini_model = self._clean_val(self._txt_gemini_model.text()) or "gemini-2.0-flash"
+        gemini_model = self._clean_val(self._txt_gemini_model.text()) or "gemini-3.5-flash"
 
         anthropic_key = self._clean_val(self._txt_anthropic_key.text())
         anthropic_model = self._clean_val(self._txt_anthropic_model.text()) or "claude-3-5-sonnet-20241022"
@@ -467,6 +473,7 @@ class SettingsDialog(QDialog):
             dotenv.set_key(str(env_path), "TTS_VOLUME", str(round(self._slider_volume.value() / 100.0, 2)))
             dotenv.set_key(str(env_path), "ORIGINAL_AUDIO_VOLUME", str(round(self._slider_bg_volume.value() / 100.0, 2)))
             dotenv.set_key(str(env_path), "MUTE_ORIGINAL_SPEAKER", "true" if self._chk_mute_original.isChecked() else "false")
+            dotenv.set_key(str(env_path), "TTS_DYNAMIC_SPEED", "true" if self._chk_dynamic_speed.isChecked() else "false")
             dotenv.set_key(str(env_path), "PREVENT_SLEEP", "true" if self._chk_prevent_sleep.isChecked() else "false")
 
             # Update settings object
@@ -475,6 +482,7 @@ class SettingsDialog(QDialog):
             settings.tts_volume = round(self._slider_volume.value() / 100.0, 2)
             settings.original_audio_volume = round(self._slider_bg_volume.value() / 100.0, 2)
             settings.mute_original_speaker = self._chk_mute_original.isChecked()
+            settings.tts_dynamic_speed = self._chk_dynamic_speed.isChecked()
             settings.prevent_sleep = self._chk_prevent_sleep.isChecked()
 
             from mediadubflow.utils.sleep_inhibitor import sleep_inhibitor

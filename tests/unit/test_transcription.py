@@ -208,7 +208,14 @@ def test_transcribe_audio_sync_helper(tmp_path: Path) -> None:
             str(audio_path),
             language="zh",
             word_timestamps=True,
-            vad_filter=False,
+            vad_filter=True,
+            vad_parameters={
+                "threshold": 0.20,
+                "min_speech_duration_ms": 100,
+                "max_speech_duration_s": float("inf"),
+                "min_silence_duration_ms": 250,
+                "speech_pad_ms": 300,
+            },
             condition_on_previous_text=False,
         )
 
