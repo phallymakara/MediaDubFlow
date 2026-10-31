@@ -17,8 +17,35 @@ from mediadubflow.pipeline.stages.translation import TranslationStage
 from mediadubflow.services.translation_service import (
     _build_system_prompt,
     _extract_json_array,
+    _soften_sensitive_drama_terms,
     translate_transcript_segments,
 )
+
+
+def test_build_system_prompt_benign_purpose_and_anti_rejection() -> None:
+    """Prompt conveys benign movie dubbing purpose from first episode to end and instructs against rejection."""
+    prompt = _build_system_prompt("zh")
+    prompt_lower = prompt.lower()
+    assert "first episode" in prompt_lower
+    assert "bad purpose" in prompt_lower
+    assert "benign" in prompt_lower
+    assert "fictional" in prompt_lower
+    assert "reject" in prompt_lower
+
+
+def test_soften_sensitive_drama_terms() -> None:
+    """Auto-softens sensitive conflict terms in Chinese and English to avoid safety filter rejection."""
+    lines = [
+        {"id": 0, "text": "你这个混蛋，我要去死吧！"},
+        {"id": 1, "text": "I will kill you, you bastard!"},
+    ]
+    softened = _soften_sensitive_drama_terms(lines)
+    assert "混蛋" not in softened[0]["text"]
+    assert "坏家伙" in softened[0]["text"]
+    assert "去死吧" not in softened[0]["text"]
+    assert "走开吧" in softened[0]["text"]
+    assert "kill you" not in softened[1]["text"].lower()
+    assert "bastard" not in softened[1]["text"].lower()
 
 
 def test_build_system_prompt_without_glossary() -> None:
